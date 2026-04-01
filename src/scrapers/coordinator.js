@@ -4,6 +4,7 @@
  */
 
 import { HiAnimeScraper } from './hianime.js';
+import { AniWatchScraper } from './aniwatch.js';
 import { MangaDexScraper } from './mangadex.js';
 import { MangaKatanaScraper } from './mangakatana.js';
 
@@ -30,6 +31,15 @@ export class SearchCoordinator {
                         results.all.push(...animeResults.map(r => ({ ...r, type: 'anime' })));
                     })
                     .catch(error => console.error('HiAnime search failed:', error))
+            );
+
+            promises.push(
+                AniWatchScraper.search(query)
+                    .then(animeResults => {
+                        results.anime.push(...animeResults);
+                        results.all.push(...animeResults.map(r => ({ ...r, type: 'anime' })));
+                    })
+                    .catch(error => console.error('AniWatch search failed:', error))
             );
         }
 
@@ -69,7 +79,28 @@ export class SearchCoordinator {
      */
     static async searchAnime(query) {
         try {
-            return await HiAnimeScraper.search(query);
+            const results = [];
+            
+            // Try both sources in parallel
+            const [hianimeResults, aniwatchResults] = await Promise.allSettled([
+                HiAnimeScraper.search(query),
+                AniWatchScraper.search(query)
+            ]).then(settled => [
+                settled[0].status === 'fulfilled' ? settled[0].value : [],
+                settled[1].status === 'fulfilled' ? settled[1].value : []
+            ]);
+
+            results.push(...hianimeResults);
+
+            // Add aniwatch results if HiAnime has few results
+            if (hianimeResults.length < 10) {
+                const uniqueAniwatch = aniwatchResults.filter(aw =>
+                    !results.some(h => h.title.toLowerCase() === aw.title.toLowerCase())
+                );
+                results.push(...uniqueAniwatch);
+            }
+
+            return results;
         } catch (error) {
             console.error('Anime search error:', error);
             return [];
@@ -105,12 +136,28 @@ export class SearchCoordinator {
     /**
      * Get episodes for an anime from specific source
      */
-    static async getAnimeEpisodes(animeId, animeUrl) {
+    static async getAnimeEpisodes(animeId, animeUrl, source = 'hianime') {
         try {
+            if (source === 'aniwatch') {
+                return await AniWatchScraper.getEpisodes(animeId, animeUrl);
+            } else if (source === 'hianime' || !source) {
+                return await HiAnimeScraper.getEpisodes(animeUrl);
+            }
+            // Fallback to HiAnime if source not recognized
             return await HiAnimeScraper.getEpisodes(animeUrl);
         } catch (error) {
             console.error('Failed to get episodes:', error);
-            return [];
+            // Try fallback source
+            try {
+                if (source === 'aniwatch') {
+                    return await HiAnimeScraper.getEpisodes(animeUrl);
+                } else {
+                    return await AniWatchScraper.getEpisodes(animeId, animeUrl);
+                }
+            } catch (fallbackError) {
+                console.error('Fallback also failed:', fallbackError);
+                return [];
+            }
         }
     }
 
