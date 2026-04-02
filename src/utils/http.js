@@ -31,15 +31,22 @@ class HttpClient {
     async get(url, headers = {}) {
         const plugin = this._getPlugin();
 
+        // Auto-add Referer for sites that need it (hotlink protection)
+        const urlObj = new URL(url);
+        const defaultHeaders = {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+            'Referer': `${urlObj.protocol}//${urlObj.hostname}/`,
+            'Accept-Language': 'en-US,en;q=0.9',
+        };
+
+        const mergedHeaders = { ...defaultHeaders, ...headers };
+
         if (plugin) {
             try {
                 const resp = await plugin.request({
                     method: 'GET',
                     url,
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        ...headers
-                    }
+                    headers: mergedHeaders
                 });
                 return {
                     data: typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data),
@@ -52,8 +59,8 @@ class HttpClient {
             }
         }
 
-        // Fallback to fetch (works for APIs with CORS headers like MangaDex)
-        const resp = await fetch(url, { headers });
+        // Fallback to fetch (works for APIs with CORS headers like MangaDex, Jikan)
+        const resp = await fetch(url, { headers: mergedHeaders });
         const text = await resp.text();
         let json = null;
         try { json = JSON.parse(text); } catch (_) {}
@@ -64,7 +71,10 @@ class HttpClient {
      * GET request returning parsed JSON
      */
     async getJSON(url, headers = {}) {
-        const result = await this.get(url, headers);
+        const result = await this.get(url, {
+            'Accept': 'application/json',
+            ...headers
+        });
         if (result.json) return result.json;
         return JSON.parse(result.data);
     }
@@ -74,7 +84,7 @@ class HttpClient {
      */
     async getHTML(url, headers = {}) {
         const result = await this.get(url, {
-            'Accept': 'text/html,application/xhtml+xml',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             ...headers
         });
         return result.data;

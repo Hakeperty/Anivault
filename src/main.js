@@ -12,6 +12,7 @@ import { SettingsScreen } from './screens/settings.js';
 import { DetailScreen } from './screens/detail.js';
 import { PlayerScreen } from './screens/player.js';
 import { ReaderScreen } from './screens/reader.js';
+import { AniWatchScraper } from './scrapers/aniwatch.js';
 
 class AniVaultApp {
     constructor() {
@@ -25,6 +26,17 @@ class AniVaultApp {
             // Initialize database
             await db.init();
             console.log('[DB] initialized');
+
+            // Load saved API URL from settings
+            try {
+                const savedApiUrl = await db.getSetting('animeApiUrl');
+                if (savedApiUrl) {
+                    AniWatchScraper.API_BASE = savedApiUrl;
+                    console.log('[API] Using saved anime API:', savedApiUrl);
+                }
+            } catch (e) {
+                console.warn('[API] Failed to load saved API URL:', e.message);
+            }
 
             // Initialize Capacitor back button if plugin available
             try {

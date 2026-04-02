@@ -1,120 +1,116 @@
 /**
- * HiAnime Scraper
- * Fetches anime data from HiAnime (formerly 9anime)
- * Uses Capacitor native HTTP to bypass CORS restrictions.
+ * HiAnime Scraper (API-based)
+ * Uses the aniwatch-api REST endpoints (which serve HiAnime data).
+ * Direct scraping of hianime.to fails due to Cloudflare JS challenges.
+ * Shares the same configurable API backend as the AniWatch scraper.
  */
 
 import { http } from '../utils/http.js';
-
-const HIANIME_BASE = 'https://hianime.to';
+import { AniWatchScraper } from './aniwatch.js';
 
 export class HiAnimeScraper {
-    /**
-     * Search for anime on HiAnime
-     */
     static async search(query) {
         try {
-            const searchUrl = `${HIANIME_BASE}/search?keyword=${encodeURIComponent(query)}`;
-            const html = await http.getHTML(searchUrl);
-            return this.parseSearchResults(html);
+            const apiBase = AniWatchScraper.API_BASE;
+            const data = await http.getJSON(
+                `${apiBase}/api/v2/hianime/search?q=${encodeURIComponent(query)}&page=1`
+            );
+            const animes = data?.data?.animes || data?.animes || [];
+            return animes.map(a => ({
+                id: a.id || a.animeId || '',
+                title: a.name || a.title || '',
+                coverImage: a.poster || a.img || a.coverImage || '',
+                url: a.id || '',
+                source: 'hianime',
+                type: 'anime',
+                episodes: a.episodes || null,
+                rating: a.rating || 'N/A',
+                description: a.description || ''
+            })).filter(r => r.id && r.title);
         } catch (error) {
-            console.error('HiAnime search error:', error);
+            console.error('HiAnime API search error:', error);
             return [];
         }
     }
 
-    /**
-     * Get episode list for an anime
-     */
-    static async getEpisodes(animeUrl) {
+    static async getEpisodes(animeId) {
         try {
-            const fullUrl = animeUrl.startsWith('http') ? animeUrl : `${HIANIME_BASE}${animeUrl}`;
-            const html = await http.getHTML(fullUrl);
-            return this.parseEpisodeList(html);
+            const apiBase = AniWatchScraper.API_BASE;
+            const cleanId = animeId.replace(/^(https?:\/\/[^/]+)?\/*/,'').replace(/^api\/v2\/hianime\/anime\//, '');
+            const data = await http.getJSON(
+                `${apiBase}/api/v2/hianime/anime/${encodeURIComponent(cleanId)}/episodes`
+            );
+            const eps = data?.data?.episodes || data?.episodes || [];
+            return eps.map((ep, i) => ({
+                episode: ep.number || ep.episodeNo || (i + 1),
+                number: ep.number || ep.episodeNo || (i + 1),
+                url: ep.episodeId || ep.id || '',
+                title: ep.title || `Episode ${ep.number || (i + 1)}`,
+                isFiller: ep.isFiller || false
+            })).sort((a, b) => a.episode - b.episode);
         } catch (error) {
-            console.error('HiAnime episode fetch error:', error);
+            console.error('HiAnime API getEpisodes error:', error);
             return [];
         }
     }
 
-    /**
-     * Get streaming URL for an episode
-     */
-    static async getStreamUrl(episodeUrl) {
+    static async getStreamUrl(episodeId) {
         try {
-            const fullUrl = episodeUrl.startsWith('http') ? episodeUrl : `${HIANIME_BASE}${episodeUrl}`;
-            const html = await http.getHTML(fullUrl);
-            
-            const hlsMatch = html.match(/"file":"([^"]+\.m3u8)"/);
-            if (hlsMatch) {
-                return { url: hlsMatch[1], type: 'hls', quality: 'auto' };
-            }
-            return null;
+            const apiBase = AniWatchScraper.API_BASE;
+            const cleanId = episodeId.replace(/^(https?:\/\/[^/]+)?\/*/,'');
+            const data = await http.getJSON(
+                `${apiBase}/api/v2/hianime/episode/sources?animeEpisodeId=${encodeURIComponent(cleanId)}`
+            );
+
+            const sources = data?.data?.sources || data?.sources || [];
+            const tracks = data?.data?.tracks || data?.tracks || [];
+            const hlsSource = sources.find(s => s.url?.includes('.m3u8')) || sources[0];
+
+            if (!hlsSource?.url) return null;
+
+            return {
+                url: hlsSource.url,
+                type: hlsSource.url.includes('.m3u8') ? 'hls' : 'mp4',
+                quality: hlsSource.quality || 'auto',
+                subtitles: tracks.filter(t => t.kind === 'captions').map(t => ({
+                    lang: t.label || 'Unknown',
+                    url: t.file || t.url
+                }))
+            };
         } catch (error) {
-            console.error('HiAnime stream URL fetch error:', error);
+            console.error('HiAnime API getStreamUrl error:', error);
             return null;
         }
     }
 
-    /**
-     * Parse search results HTML
-     */
-    static parseSearchResults(html) {
-        const results = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+    static async getDetails(animeId) {
+        try {
+            const apiBase = AniWatchScraper.API_BASE;
+            const cleanId = animeId.replace(/^(https?:\/\/[^/]+)?\/*/,'');
+            const data = await http.getJSON(
+                `${apiBase}/api/v2/hianime/anime/${encodeURIComponent(cleanId)}`
+            );
+            const info = data?.data?.anime?.info || data?.anime?.info || data?.data || {};
+            const moreInfo = data?.data?.anime?.moreInfo || data?.anime?.moreInfo || {};
 
-        // Look for anime items in search results
-        // This selector may need updating if HiAnime changes their layout
-        const items = doc.querySelectorAll('.flw-item, .anime-card, [data-anime-id]');
-
-        items.forEach(item => {
-            try {
-                const titleEl = item.querySelector('h3 a, .title a, [data-title]');
-                const coverEl = item.querySelector('img, [data-src]');
-                const linkEl = item.querySelector('a[href*="/watch/"]');
-
-                if (titleEl && linkEl) {
-                    results.push({
-                        id: linkEl.href.split('/').pop(),
-                        title: titleEl.textContent.trim() || titleEl.getAttribute('data-title'),
-                        coverImage: coverEl?.src || coverEl?.getAttribute('data-src') || '',
-                        url: linkEl.href,
-                        source: 'hianime'
-                    });
-                }
-            } catch (e) {
-                console.debug('Parse error on item:', e);
-            }
-        });
-
-        return results;
-    }
-
-    /**
-     * Parse episode list HTML
-     */
-    static parseEpisodeList(html) {
-        const episodes = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-
-        // Look for episode links
-        const episodeLinks = doc.querySelectorAll('a[href*="/ep-"]');
-
-        episodeLinks.forEach((link, index) => {
-            try {
-                const episodeNum = link.textContent.match(/\d+/)?.[0] || (index + 1);
-                episodes.push({
-                    episode: parseInt(episodeNum),
-                    url: link.href,
-                    title: `Episode ${episodeNum}`
-                });
-            } catch (e) {
-                console.debug('Episode parse error:', e);
-            }
-        });
-
-        return episodes.sort((a, b) => a.episode - b.episode);
+            return {
+                id: cleanId,
+                title: info.name || info.title || cleanId,
+                description: info.description || info.synopsis || '',
+                genres: moreInfo.genres || info.genres || [],
+                coverImage: info.poster || info.img || '',
+                source: 'hianime',
+                type: 'anime',
+                rating: info.stats?.rating || moreInfo.malscore || 'N/A',
+                status: moreInfo.status || info.status || 'Unknown'
+            };
+        } catch (error) {
+            console.error('HiAnime API getDetails error:', error);
+            return {
+                id: animeId, title: animeId, description: '', genres: [],
+                coverImage: '', source: 'hianime', type: 'anime',
+                rating: 'N/A', status: 'Unknown'
+            };
+        }
     }
 }

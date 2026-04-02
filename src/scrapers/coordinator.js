@@ -1,6 +1,8 @@
 /**
  * Multi-Source Search Coordinator
- * Searches all scrapers simultaneously and merges results
+ * Searches all scrapers simultaneously and merges results.
+ * Anime sources use API-based scrapers (aniwatch-api) to bypass Cloudflare.
+ * Manga sources use MangaDex API (primary) and MangaKatana HTML scraping (fallback).
  */
 
 import { HiAnimeScraper } from './hianime.js';
@@ -12,7 +14,6 @@ import { JikanScraper } from './jikan.js';
 export class SearchCoordinator {
     /**
      * Search all sources for anime/manga
-     * Returns results from all sources that succeed
      */
     static async searchAll(query, contentType = 'both') {
         const results = {
@@ -23,9 +24,8 @@ export class SearchCoordinator {
 
         const promises = [];
 
-        // Search anime sources
         if (contentType === 'anime' || contentType === 'both') {
-            // Jikan (MyAnimeList) - most reliable anime source
+            // Jikan (MyAnimeList) - most reliable anime metadata
             promises.push(
                 JikanScraper.search(query)
                     .then(animeResults => {
@@ -35,26 +35,21 @@ export class SearchCoordinator {
                     .catch(error => console.error('Jikan search failed:', error))
             );
 
+            // HiAnime API - for streaming sources
             promises.push(
                 HiAnimeScraper.search(query)
                     .then(animeResults => {
-                        results.anime.push(...animeResults);
-                        results.all.push(...animeResults.map(r => ({ ...r, type: 'anime' })));
+                        // Deduplicate against Jikan results
+                        const newResults = animeResults.filter(r =>
+                            !results.anime.some(a => this._titlesMatch(a.title, r.title))
+                        );
+                        results.anime.push(...newResults);
+                        results.all.push(...newResults.map(r => ({ ...r, type: 'anime' })));
                     })
                     .catch(error => console.error('HiAnime search failed:', error))
             );
-
-            promises.push(
-                AniWatchScraper.search(query)
-                    .then(animeResults => {
-                        results.anime.push(...animeResults);
-                        results.all.push(...animeResults.map(r => ({ ...r, type: 'anime' })));
-                    })
-                    .catch(error => console.error('AniWatch search failed:', error))
-            );
         }
 
-        // Search manga sources
         if (contentType === 'manga' || contentType === 'both') {
             promises.push(
                 MangaDexScraper.search(query)
@@ -68,9 +63,8 @@ export class SearchCoordinator {
             promises.push(
                 MangaKatanaScraper.search(query)
                     .then(mangaResults => {
-                        // Avoid duplicates - check if title already exists
-                        const newResults = mangaResults.filter(r => 
-                            !results.manga.some(m => m.title.toLowerCase() === r.title.toLowerCase())
+                        const newResults = mangaResults.filter(r =>
+                            !results.manga.some(m => this._titlesMatch(m.title, r.title))
                         );
                         results.manga.push(...newResults);
                         results.all.push(...newResults.map(r => ({ ...r, type: 'manga' })));
@@ -79,37 +73,30 @@ export class SearchCoordinator {
             );
         }
 
-        // Wait for all searches to complete
         await Promise.allSettled(promises);
-
         return results;
     }
 
     /**
-     * Search just anime
+     * Search just anime (Jikan for metadata, HiAnime API for streaming)
      */
     static async searchAnime(query) {
         try {
-            const results = [];
-            
-            // Try both sources in parallel
-            const [hianimeResults, aniwatchResults] = await Promise.allSettled([
-                HiAnimeScraper.search(query),
-                AniWatchScraper.search(query)
+            const [jikanResults, hianimeResults] = await Promise.allSettled([
+                JikanScraper.search(query),
+                HiAnimeScraper.search(query)
             ]).then(settled => [
                 settled[0].status === 'fulfilled' ? settled[0].value : [],
                 settled[1].status === 'fulfilled' ? settled[1].value : []
             ]);
 
-            results.push(...hianimeResults);
+            const results = [...jikanResults];
 
-            // Add aniwatch results if HiAnime has few results
-            if (hianimeResults.length < 10) {
-                const uniqueAniwatch = aniwatchResults.filter(aw =>
-                    !results.some(h => h.title.toLowerCase() === aw.title.toLowerCase())
-                );
-                results.push(...uniqueAniwatch);
-            }
+            // Add HiAnime results that aren't duplicates
+            const uniqueHianime = hianimeResults.filter(h =>
+                !results.some(r => this._titlesMatch(r.title, h.title))
+            );
+            results.push(...uniqueHianime);
 
             return results;
         } catch (error) {
@@ -125,18 +112,20 @@ export class SearchCoordinator {
         const results = [];
 
         try {
-            // Primary source
-            const mangaDexResults = await MangaDexScraper.search(query);
+            const [mangaDexResults, katanaResults] = await Promise.allSettled([
+                MangaDexScraper.search(query),
+                MangaKatanaScraper.search(query)
+            ]).then(settled => [
+                settled[0].status === 'fulfilled' ? settled[0].value : [],
+                settled[1].status === 'fulfilled' ? settled[1].value : []
+            ]);
+
             results.push(...mangaDexResults);
 
-            // Fallback source (only if few results)
-            if (mangaDexResults.length < 5) {
-                const katanaResults = await MangaKatanaScraper.search(query);
-                const newResults = katanaResults.filter(r => 
-                    !results.some(m => m.title.toLowerCase() === r.title.toLowerCase())
-                );
-                results.push(...newResults);
-            }
+            const newResults = katanaResults.filter(r =>
+                !results.some(m => this._titlesMatch(m.title, r.title))
+            );
+            results.push(...newResults);
         } catch (error) {
             console.error('Manga search error:', error);
         }
@@ -150,20 +139,18 @@ export class SearchCoordinator {
     static async getAnimeEpisodes(animeId, animeUrl, source = 'hianime') {
         try {
             if (source === 'aniwatch') {
-                return await AniWatchScraper.getEpisodes(animeId, animeUrl);
-            } else if (source === 'hianime' || !source) {
-                return await HiAnimeScraper.getEpisodes(animeUrl);
+                return await AniWatchScraper.getEpisodes(animeId);
             }
-            // Fallback to HiAnime if source not recognized
-            return await HiAnimeScraper.getEpisodes(animeUrl);
+            // Default to HiAnime API
+            return await HiAnimeScraper.getEpisodes(animeId || animeUrl);
         } catch (error) {
-            console.error('Failed to get episodes:', error);
-            // Try fallback source
+            console.error('Failed to get episodes from', source, ':', error);
+            // Try fallback
             try {
                 if (source === 'aniwatch') {
-                    return await HiAnimeScraper.getEpisodes(animeUrl);
+                    return await HiAnimeScraper.getEpisodes(animeId || animeUrl);
                 } else {
-                    return await AniWatchScraper.getEpisodes(animeId, animeUrl);
+                    return await AniWatchScraper.getEpisodes(animeId);
                 }
             } catch (fallbackError) {
                 console.error('Fallback also failed:', fallbackError);
@@ -184,6 +171,12 @@ export class SearchCoordinator {
             }
         } catch (error) {
             console.error('Failed to get chapters:', error);
+            // Try fallback
+            try {
+                if (source === 'mangadex') {
+                    return await MangaKatanaScraper.getChapters(mangaId);
+                }
+            } catch (_) {}
             return [];
         }
     }
@@ -207,12 +200,26 @@ export class SearchCoordinator {
     /**
      * Get streaming URL for anime episode
      */
-    static async getAnimeStreamUrl(episodeUrl) {
+    static async getAnimeStreamUrl(episodeUrl, source = 'hianime') {
         try {
+            if (source === 'aniwatch') {
+                return await AniWatchScraper.getStreamUrl(episodeUrl);
+            }
             return await HiAnimeScraper.getStreamUrl(episodeUrl);
         } catch (error) {
             console.error('Failed to get stream URL:', error);
+            // Try fallback
+            try {
+                return await AniWatchScraper.getStreamUrl(episodeUrl);
+            } catch (_) {}
             return null;
         }
+    }
+
+    /** Fuzzy title comparison for deduplication */
+    static _titlesMatch(a, b) {
+        if (!a || !b) return false;
+        const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normalize(a) === normalize(b);
     }
 }
