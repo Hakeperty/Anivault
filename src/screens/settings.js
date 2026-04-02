@@ -5,7 +5,7 @@
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 const SETTING_DEFAULTS = {
     videoQuality: 'auto',

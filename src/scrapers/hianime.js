@@ -1,7 +1,7 @@
 /**
  * HiAnime Scraper - Delegates to AniWatch
- * HiAnime.to is currently down, so this wraps the AniWatch scraper
- * and re-labels results as 'hianime' source for backward compatibility.
+ * hianime.to / hianime.nz are shut down. This wraps AniWatch
+ * and re-labels results for backward compatibility.
  */
 
 import { AniWatchScraper } from './aniwatch.js';
@@ -23,11 +23,7 @@ export class HiAnimeScraper {
 
     static async getEpisodes(animeId) {
         try {
-            const episodes = await AniWatchScraper.getEpisodes(animeId);
-            return episodes.map(ep => ({
-                ...ep,
-                episode: ep.number
-            }));
+            return await AniWatchScraper.getEpisodes(animeId);
         } catch (error) {
             console.error('HiAnime getEpisodes error:', error);
             return [];
@@ -46,11 +42,7 @@ export class HiAnimeScraper {
     static async getDetails(animeId) {
         try {
             const details = await AniWatchScraper.getDetails(animeId);
-            return {
-                ...details,
-                source: 'hianime',
-                coverImage: details.coverUrl || ''
-            };
+            return { ...details, source: 'hianime' };
         } catch (error) {
             console.error('HiAnime getDetails error:', error);
             return {
