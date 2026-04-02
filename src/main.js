@@ -26,10 +26,13 @@ class AniVaultApp {
             await db.init();
             console.log('[DB] initialized');
 
-            // Initialize Capacitor if available
-            if (window.Capacitor) {
-                const { App } = window.Capacitor.Plugins;
-                App.addListener('backButton', () => this.goBack());
+            // Initialize Capacitor back button if plugin available
+            try {
+                if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+                    window.Capacitor.Plugins.App.addListener('backButton', () => this.goBack());
+                }
+            } catch (e) {
+                console.warn('[Capacitor] Back button handler not available:', e.message);
             }
 
             // Setup UI listeners
