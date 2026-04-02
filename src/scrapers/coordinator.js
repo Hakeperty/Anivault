@@ -1,8 +1,8 @@
 /**
  * Multi-Source Search Coordinator
  * Searches all scrapers simultaneously and merges results.
- * Anime sources use API-based scrapers (aniwatch-api) to bypass Cloudflare.
- * Manga sources use MangaDex API (primary) and MangaKatana HTML scraping (fallback).
+ * Anime: Jikan (MAL metadata) + AniWatch (direct HTML scraping of aniwatch.to)
+ * Manga: MangaDex API (primary) + MangaKatana (direct HTML scraping)
  */
 
 import { HiAnimeScraper } from './hianime.js';
@@ -35,7 +35,7 @@ export class SearchCoordinator {
                     .catch(error => console.error('Jikan search failed:', error))
             );
 
-            // HiAnime API - for streaming sources
+            // HiAnime (delegates to AniWatch direct scraping)
             promises.push(
                 HiAnimeScraper.search(query)
                     .then(animeResults => {
@@ -78,7 +78,7 @@ export class SearchCoordinator {
     }
 
     /**
-     * Search just anime (Jikan for metadata, HiAnime API for streaming)
+     * Search just anime (Jikan for metadata, AniWatch for streaming)
      */
     static async searchAnime(query) {
         try {

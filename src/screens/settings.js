@@ -4,16 +4,14 @@
 
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
-import { AniWatchScraper } from '../scrapers/aniwatch.js';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 const SETTING_DEFAULTS = {
     videoQuality: 'auto',
     contentType: 'both',
     readerMode: 'page',
-    nsfwFilter: 'off',
-    animeApiUrl: 'https://api-aniwatch.onrender.com'
+    nsfwFilter: 'off'
 };
 
 export class SettingsScreen {
@@ -26,11 +24,6 @@ export class SettingsScreen {
         try {
             this.settings = { ...SETTING_DEFAULTS, ...(await db.getAllSettings()) };
         } catch { this.settings = { ...SETTING_DEFAULTS }; }
-
-        // Apply saved API URL
-        if (this.settings.animeApiUrl) {
-            AniWatchScraper.API_BASE = this.settings.animeApiUrl;
-        }
 
         try {
             this.stats = await db.getLibraryStats();
@@ -63,24 +56,6 @@ export class SettingsScreen {
                         { value: 'scroll', label: 'Vertical Scroll' }
                     ])}
                     ${this.renderToggle('nsfwFilter', 'NSFW Filter', 'Block adult content from search results')}
-                </div>
-
-                <div class="settings-group">
-                    <h3 class="settings-group-title">Anime API</h3>
-                    <div class="settings-item static" style="flex-direction:column;align-items:stretch;gap:8px;">
-                        <div class="settings-item-info">
-                            <span class="settings-item-title">API Endpoint</span>
-                            <span class="settings-item-desc">aniwatch-api compatible URL for anime streaming</span>
-                        </div>
-                        <div style="display:flex;gap:8px;">
-                            <input type="text" id="settings-api-url" value="${this.settings.animeApiUrl || SETTING_DEFAULTS.animeApiUrl}"
-                                placeholder="https://api-aniwatch.onrender.com"
-                                style="flex:1;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;font-size:13px;font-family:monospace;">
-                            <button id="settings-api-save" style="background:var(--accent-primary);color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap;">Save</button>
-                            <button id="settings-api-test" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap;">Test</button>
-                        </div>
-                        <span id="settings-api-status" class="settings-item-desc" style="min-height:18px;"></span>
-                    </div>
                 </div>
 
                 <div class="settings-group">
@@ -117,7 +92,7 @@ export class SettingsScreen {
                     <div class="settings-item static">
                         <div class="settings-item-info">
                             <span class="settings-item-title">Anime</span>
-                            <span class="settings-item-desc">Jikan (MAL), HiAnime API, AniWatch API</span>
+                            <span class="settings-item-desc">Jikan (MAL), AniWatch (aniwatch.to)</span>
                         </div>
                     </div>
                     <div class="settings-item static">
@@ -198,51 +173,6 @@ export class SettingsScreen {
                     knob.style.right = newState === 'on' ? '3px' : 'auto';
                 }
             });
-        });
-
-        // API URL save handler
-        document.getElementById('settings-api-save')?.addEventListener('click', async () => {
-            const input = document.getElementById('settings-api-url');
-            const statusEl = document.getElementById('settings-api-status');
-            const url = (input?.value || '').trim().replace(/\/+$/, '');
-            if (!url) {
-                statusEl.textContent = '⚠️ Please enter an API URL';
-                statusEl.style.color = 'var(--error)';
-                return;
-            }
-            await this.saveSetting('animeApiUrl', url);
-            AniWatchScraper.API_BASE = url;
-            statusEl.textContent = '✅ API URL saved';
-            statusEl.style.color = 'var(--success, #4caf50)';
-        });
-
-        // API URL test handler
-        document.getElementById('settings-api-test')?.addEventListener('click', async () => {
-            const input = document.getElementById('settings-api-url');
-            const statusEl = document.getElementById('settings-api-status');
-            const url = (input?.value || '').trim().replace(/\/+$/, '');
-            if (!url) {
-                statusEl.textContent = '⚠️ Please enter an API URL';
-                statusEl.style.color = 'var(--error)';
-                return;
-            }
-            statusEl.textContent = '🔄 Testing connection...';
-            statusEl.style.color = 'var(--text-secondary)';
-            try {
-                const { http } = await import('../utils/http.js');
-                const data = await http.getJSON(`${url}/api/v2/hianime/search?q=naruto&page=1`);
-                const count = data?.data?.animes?.length || data?.animes?.length || 0;
-                if (count > 0) {
-                    statusEl.textContent = `✅ Working! Found ${count} results`;
-                    statusEl.style.color = 'var(--success, #4caf50)';
-                } else {
-                    statusEl.textContent = '⚠️ Connected but no results returned';
-                    statusEl.style.color = 'var(--warning, #ff9800)';
-                }
-            } catch (err) {
-                statusEl.textContent = `❌ Failed: ${err.message || 'Connection error'}`;
-                statusEl.style.color = 'var(--error)';
-            }
         });
 
         document.getElementById('settings-clear-library')?.addEventListener('click', () => this.showClearConfirmation());

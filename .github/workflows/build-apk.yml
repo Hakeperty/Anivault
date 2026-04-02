@@ -25,13 +25,10 @@ jobs:
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '11'
+        java-version: '17'
     
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-      with:
-        api-levels: 30,31,32,33,34
-        build-tools-version: 34.0.0
     
     - name: Install npm dependencies
       run: npm install
@@ -60,7 +57,8 @@ jobs:
       if: always()
       with:
         name: anivault-debug
-        path: ${{ steps.apk_files.outputs.debug_apk }}
+        path: android/app/build/outputs/apk/debug/
+        if-no-files-found: warn
         retention-days: 30
     
     - name: Upload release APK as artifact
@@ -68,7 +66,8 @@ jobs:
       if: always()
       with:
         name: anivault-release
-        path: ${{ steps.apk_files.outputs.release_apk }}
+        path: android/app/build/outputs/apk/release/
+        if-no-files-found: warn
         retention-days: 30
     
     - name: Create Release on tag
