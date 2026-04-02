@@ -1,25 +1,18 @@
 /**
  * MangaKatana Scraper
  * Fallback manga source for when MangaDex is unavailable
- * Uses CORS proxy for browser requests
+ * Uses Capacitor native HTTP to bypass CORS restrictions.
  */
 
+import { http } from '../utils/http.js';
+
 const MANGAKATANA_BASE = 'https://mangakatana.com';
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 export class MangaKatanaScraper {
-    /**
-     * Search for manga on MangaKatana
-     */
     static async search(query) {
         try {
             const searchUrl = `${MANGAKATANA_BASE}/?search=${encodeURIComponent(query)}&search_type=manga_name`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(searchUrl);
-
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(searchUrl);
             return this.parseSearchResults(html);
         } catch (error) {
             console.error('MangaKatana search error:', error);
@@ -27,18 +20,10 @@ export class MangaKatanaScraper {
         }
     }
 
-    /**
-     * Get chapter list for a manga
-     */
     static async getChapters(mangaUrl) {
         try {
             const fullUrl = mangaUrl.startsWith('http') ? mangaUrl : `${MANGAKATANA_BASE}${mangaUrl}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(fullUrl);
-
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(fullUrl);
             return this.parseChapterList(html);
         } catch (error) {
             console.error('MangaKatana chapter fetch error:', error);
@@ -46,18 +31,10 @@ export class MangaKatanaScraper {
         }
     }
 
-    /**
-     * Get pages for a chapter
-     */
     static async getPages(chapterUrl) {
         try {
             const fullUrl = chapterUrl.startsWith('http') ? chapterUrl : `${MANGAKATANA_BASE}${chapterUrl}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(fullUrl);
-
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(fullUrl);
             return this.parsePages(html);
         } catch (error) {
             console.error('MangaKatana pages fetch error:', error);

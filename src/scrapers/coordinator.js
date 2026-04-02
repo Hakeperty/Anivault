@@ -7,6 +7,7 @@ import { HiAnimeScraper } from './hianime.js';
 import { AniWatchScraper } from './aniwatch.js';
 import { MangaDexScraper } from './mangadex.js';
 import { MangaKatanaScraper } from './mangakatana.js';
+import { JikanScraper } from './jikan.js';
 
 export class SearchCoordinator {
     /**
@@ -24,6 +25,16 @@ export class SearchCoordinator {
 
         // Search anime sources
         if (contentType === 'anime' || contentType === 'both') {
+            // Jikan (MyAnimeList) - most reliable anime source
+            promises.push(
+                JikanScraper.search(query)
+                    .then(animeResults => {
+                        results.anime.push(...animeResults);
+                        results.all.push(...animeResults.map(r => ({ ...r, type: 'anime' })));
+                    })
+                    .catch(error => console.error('Jikan search failed:', error))
+            );
+
             promises.push(
                 HiAnimeScraper.search(query)
                     .then(animeResults => {

@@ -1,32 +1,21 @@
 /**
  * AniWatch Scraper
  * Scrapes anime content from aniwatch.to
- * Supports search, episode listing, and stream extraction
+ * Uses Capacitor native HTTP to bypass CORS restrictions.
  */
 
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+import { http } from '../utils/http.js';
+
 const BASE_URL = 'https://aniwatch.to';
 
 export class AniWatchScraper {
     /**
      * Search for anime on aniwatch.to
-     * @param {string} query - Search query
-     * @returns {Promise<Array>} Search results with title, cover, url, slug
      */
     static async search(query) {
         try {
             const searchUrl = `${BASE_URL}/search?keyword=${encodeURIComponent(query)}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(searchUrl);
-            
-            const response = await fetch(proxyUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(searchUrl);
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
@@ -86,18 +75,7 @@ export class AniWatchScraper {
     static async getEpisodes(id, url = '') {
         try {
             const animeUrl = url || `${BASE_URL}/watch/${id}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(animeUrl);
-
-            const response = await fetch(proxyUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': BASE_URL
-                }
-            });
-
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(animeUrl);
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
@@ -147,20 +125,8 @@ export class AniWatchScraper {
      */
     static async getStreamUrl(episodeId, episodeUrl) {
         try {
-            const proxyUrl = CORS_PROXY + encodeURIComponent(episodeUrl);
+            const html = await http.getHTML(episodeUrl);
 
-            const response = await fetch(proxyUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': BASE_URL
-                }
-            });
-
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
-
-            // Look for m3u8 URL patterns in HTML and scripts
             const m3u8Match = html.match(/["']?(https?:[^"'\s]+\.m3u8[^"'\s]*)/i);
             const sourceMatch = html.match(/src:\s*["'](https?:[^"']+)["']/i);
             const playerMatch = html.match(/url:\s*["'](https?:[^"']+)["']/i);
@@ -193,18 +159,7 @@ export class AniWatchScraper {
     static async getDetails(id, url = '') {
         try {
             const animeUrl = url || `${BASE_URL}/watch/${id}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(animeUrl);
-
-            const response = await fetch(proxyUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': BASE_URL
-                }
-            });
-
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(animeUrl);
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 

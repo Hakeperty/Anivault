@@ -1,13 +1,12 @@
 /**
  * HiAnime Scraper
  * Fetches anime data from HiAnime (formerly 9anime)
- * 
- * Note: This is a demonstration scraper. Target sites may change their structure,
- * so this will need maintenance. Uses CORS proxy for browser requests.
+ * Uses Capacitor native HTTP to bypass CORS restrictions.
  */
 
+import { http } from '../utils/http.js';
+
 const HIANIME_BASE = 'https://hianime.to';
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 export class HiAnimeScraper {
     /**
@@ -16,12 +15,7 @@ export class HiAnimeScraper {
     static async search(query) {
         try {
             const searchUrl = `${HIANIME_BASE}/search?keyword=${encodeURIComponent(query)}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(searchUrl);
-
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(searchUrl);
             return this.parseSearchResults(html);
         } catch (error) {
             console.error('HiAnime search error:', error);
@@ -35,12 +29,7 @@ export class HiAnimeScraper {
     static async getEpisodes(animeUrl) {
         try {
             const fullUrl = animeUrl.startsWith('http') ? animeUrl : `${HIANIME_BASE}${animeUrl}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(fullUrl);
-
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(fullUrl);
             return this.parseEpisodeList(html);
         } catch (error) {
             console.error('HiAnime episode fetch error:', error);
@@ -50,28 +39,16 @@ export class HiAnimeScraper {
 
     /**
      * Get streaming URL for an episode
-     * Returns HLS stream URL
      */
     static async getStreamUrl(episodeUrl) {
         try {
             const fullUrl = episodeUrl.startsWith('http') ? episodeUrl : `${HIANIME_BASE}${episodeUrl}`;
-            const proxyUrl = CORS_PROXY + encodeURIComponent(fullUrl);
-
-            const response = await fetch(proxyUrl);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const html = await response.text();
+            const html = await http.getHTML(fullUrl);
             
-            // Extract HLS URL from embedded JSON or iframes
             const hlsMatch = html.match(/"file":"([^"]+\.m3u8)"/);
             if (hlsMatch) {
-                return {
-                    url: hlsMatch[1],
-                    type: 'hls',
-                    quality: 'auto'
-                };
+                return { url: hlsMatch[1], type: 'hls', quality: 'auto' };
             }
-
             return null;
         } catch (error) {
             console.error('HiAnime stream URL fetch error:', error);

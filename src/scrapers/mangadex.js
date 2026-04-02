@@ -4,26 +4,46 @@
  * Much more reliable than HTML scraping
  */
 
+import { http } from '../utils/http.js';
+
 const MANGADEX_API = 'https://api.mangadex.org';
 
 export class MangaDexScraper {
+    /**
+     * Get the best available title from MangaDex attributes
+     */
+    static _getTitle(attributes) {
+        const t = attributes.title || {};
+        // Try common keys in preference order
+        if (t.en) return t.en;
+        if (t['ja-ro']) return t['ja-ro'];
+        if (t['ko-ro']) return t['ko-ro'];
+        if (t['zh-ro']) return t['zh-ro'];
+        // Check altTitles for English
+        const alts = attributes.altTitles || [];
+        for (const alt of alts) {
+            if (alt.en) return alt.en;
+        }
+        // Fallback: first available value
+        const vals = Object.values(t);
+        return vals.length > 0 ? vals[0] : 'Unknown';
+    }
+
     /**
      * Search for manga on MangaDex
      */
     static async search(query) {
         try {
-            const url = new URL(`${MANGADEX_API}/manga`);
-            url.searchParams.set('title', query);
-            url.searchParams.set('limit', '15');
-            url.searchParams.set('includes[]', 'cover_art');
-            url.searchParams.set('contentRating[]', 'safe');
-            url.searchParams.set('contentRating[]', 'suggestive');
-            url.searchParams.set('contentRating[]', 'erotica');
+            const params = new URLSearchParams();
+            params.set('title', query);
+            params.set('limit', '15');
+            params.append('includes[]', 'cover_art');
+            params.append('contentRating[]', 'safe');
+            params.append('contentRating[]', 'suggestive');
+            params.append('contentRating[]', 'erotica');
 
-            const response = await fetch(url.toString());
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const data = await response.json();
+            const url = `${MANGADEX_API}/manga?${params.toString()}`;
+            const data = await http.getJSON(url);
             return this.parseSearchResults(data);
         } catch (error) {
             console.error('MangaDex search error:', error);
@@ -36,15 +56,13 @@ export class MangaDexScraper {
      */
     static async getChapters(mangaId) {
         try {
-            const url = new URL(`${MANGADEX_API}/manga/${mangaId}/feed`);
-            url.searchParams.set('limit', '100');
-            url.searchParams.set('order[chapter]', 'asc');
-            url.searchParams.set('translatedLanguage[]', 'en');
+            const params = new URLSearchParams();
+            params.set('limit', '100');
+            params.set('order[chapter]', 'asc');
+            params.append('translatedLanguage[]', 'en');
 
-            const response = await fetch(url.toString());
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const data = await response.json();
+            const url = `${MANGADEX_API}/manga/${mangaId}/feed?${params.toString()}`;
+            const data = await http.getJSON(url);
             return this.parseChapterList(data);
         } catch (error) {
             console.error('MangaDex chapter fetch error:', error);
@@ -58,10 +76,7 @@ export class MangaDexScraper {
     static async getPages(chapterId) {
         try {
             const url = `${MANGADEX_API}/at-home/server/${chapterId}`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const data = await response.json();
+            const data = await http.getJSON(url);
             return this.parsePageList(data);
         } catch (error) {
             console.error('MangaDex pages fetch error:', error);
@@ -87,12 +102,16 @@ export class MangaDexScraper {
 
                 results.push({
                     id: manga.id,
-                    title: attributes.title?.en || attributes.title?.ja || 'Unknown',
+                    title: this._getTitle(attributes),
                     coverImage: coverUrl,
                     description: attributes.description?.en || '',
+                    genres: (attributes.tags || [])
+                        .filter(t => t.attributes?.group === 'genre')
+                        .map(t => t.attributes?.name?.en).filter(Boolean),
                     chapters: attributes.lastChapter ? parseInt(attributes.lastChapter) : null,
                     url: `${MANGADEX_API}/manga/${manga.id}`,
-                    source: 'mangadex'
+                    source: 'mangadex',
+                    type: 'manga'
                 });
             } catch (e) {
                 console.debug('Parse error on manga:', e);
@@ -158,21 +177,19 @@ export class MangaDexScraper {
      */
     static async getDetails(mangaId) {
         try {
-            const url = new URL(`${MANGADEX_API}/manga/${mangaId}`);
-            url.searchParams.set('includes[]', 'cover_art');
-            url.searchParams.set('includes[]', 'author');
-            url.searchParams.set('includes[]', 'artist');
+            const params = new URLSearchParams();
+            params.append('includes[]', 'cover_art');
+            params.append('includes[]', 'author');
+            params.append('includes[]', 'artist');
 
-            const response = await fetch(url.toString());
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            const data = await response.json();
+            const url = `${MANGADEX_API}/manga/${mangaId}?${params.toString()}`;
+            const data = await http.getJSON(url);
             const manga = data.data;
             const attributes = manga.attributes || {};
 
             return {
                 id: manga.id,
-                title: attributes.title?.en || attributes.title?.ja || 'Unknown',
+                title: this._getTitle(attributes),
                 description: attributes.description?.en || '',
                 chapters: attributes.lastChapter ? parseInt(attributes.lastChapter) : null,
                 status: attributes.status || 'ongoing',
