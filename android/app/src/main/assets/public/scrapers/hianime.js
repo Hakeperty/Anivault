@@ -1,120 +1,55 @@
 /**
- * HiAnime Scraper
- * Fetches anime data from HiAnime (formerly 9anime)
- * Uses Capacitor native HTTP to bypass CORS restrictions.
+ * HiAnime Scraper - Delegates to AniWatch
+ * hianime.to / hianime.nz are shut down. This wraps AniWatch
+ * and re-labels results for backward compatibility.
  */
 
-import { http } from '../utils/http.js';
-
-const HIANIME_BASE = 'https://hianime.to';
+import { AniWatchScraper } from './aniwatch.js';
 
 export class HiAnimeScraper {
-    /**
-     * Search for anime on HiAnime
-     */
     static async search(query) {
         try {
-            const searchUrl = `${HIANIME_BASE}/search?keyword=${encodeURIComponent(query)}`;
-            const html = await http.getHTML(searchUrl);
-            return this.parseSearchResults(html);
+            const results = await AniWatchScraper.search(query);
+            return results.map(r => ({
+                ...r,
+                source: 'hianime',
+                coverImage: r.coverUrl || r.coverImage || ''
+            }));
         } catch (error) {
             console.error('HiAnime search error:', error);
             return [];
         }
     }
 
-    /**
-     * Get episode list for an anime
-     */
-    static async getEpisodes(animeUrl) {
+    static async getEpisodes(animeId) {
         try {
-            const fullUrl = animeUrl.startsWith('http') ? animeUrl : `${HIANIME_BASE}${animeUrl}`;
-            const html = await http.getHTML(fullUrl);
-            return this.parseEpisodeList(html);
+            return await AniWatchScraper.getEpisodes(animeId);
         } catch (error) {
-            console.error('HiAnime episode fetch error:', error);
+            console.error('HiAnime getEpisodes error:', error);
             return [];
         }
     }
 
-    /**
-     * Get streaming URL for an episode
-     */
-    static async getStreamUrl(episodeUrl) {
+    static async getStreamUrl(episodeId) {
         try {
-            const fullUrl = episodeUrl.startsWith('http') ? episodeUrl : `${HIANIME_BASE}${episodeUrl}`;
-            const html = await http.getHTML(fullUrl);
-            
-            const hlsMatch = html.match(/"file":"([^"]+\.m3u8)"/);
-            if (hlsMatch) {
-                return { url: hlsMatch[1], type: 'hls', quality: 'auto' };
-            }
-            return null;
+            return await AniWatchScraper.getStreamUrl(episodeId);
         } catch (error) {
-            console.error('HiAnime stream URL fetch error:', error);
+            console.error('HiAnime getStreamUrl error:', error);
             return null;
         }
     }
 
-    /**
-     * Parse search results HTML
-     */
-    static parseSearchResults(html) {
-        const results = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-
-        // Look for anime items in search results
-        // This selector may need updating if HiAnime changes their layout
-        const items = doc.querySelectorAll('.flw-item, .anime-card, [data-anime-id]');
-
-        items.forEach(item => {
-            try {
-                const titleEl = item.querySelector('h3 a, .title a, [data-title]');
-                const coverEl = item.querySelector('img, [data-src]');
-                const linkEl = item.querySelector('a[href*="/watch/"]');
-
-                if (titleEl && linkEl) {
-                    results.push({
-                        id: linkEl.href.split('/').pop(),
-                        title: titleEl.textContent.trim() || titleEl.getAttribute('data-title'),
-                        coverImage: coverEl?.src || coverEl?.getAttribute('data-src') || '',
-                        url: linkEl.href,
-                        source: 'hianime'
-                    });
-                }
-            } catch (e) {
-                console.debug('Parse error on item:', e);
-            }
-        });
-
-        return results;
-    }
-
-    /**
-     * Parse episode list HTML
-     */
-    static parseEpisodeList(html) {
-        const episodes = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-
-        // Look for episode links
-        const episodeLinks = doc.querySelectorAll('a[href*="/ep-"]');
-
-        episodeLinks.forEach((link, index) => {
-            try {
-                const episodeNum = link.textContent.match(/\d+/)?.[0] || (index + 1);
-                episodes.push({
-                    episode: parseInt(episodeNum),
-                    url: link.href,
-                    title: `Episode ${episodeNum}`
-                });
-            } catch (e) {
-                console.debug('Episode parse error:', e);
-            }
-        });
-
-        return episodes.sort((a, b) => a.episode - b.episode);
+    static async getDetails(animeId) {
+        try {
+            const details = await AniWatchScraper.getDetails(animeId);
+            return { ...details, source: 'hianime' };
+        } catch (error) {
+            console.error('HiAnime getDetails error:', error);
+            return {
+                id: animeId, title: animeId, description: '', genres: [],
+                coverImage: '', source: 'hianime', type: 'anime',
+                rating: 'N/A', status: 'Unknown'
+            };
+        }
     }
 }

@@ -5,6 +5,7 @@
 
 import { db } from './db/indexeddb.js';
 import { showToast } from './utils/toast.js';
+import { DownloadManager } from './utils/downloader.js';
 import { LibraryScreen } from './screens/library.js';
 import { SearchScreen } from './screens/search.js';
 import { DownloadsScreen } from './screens/downloads.js';
@@ -41,6 +42,9 @@ class AniVaultApp {
 
             // Load default screen
             await this.loadScreen('library');
+
+            // Start download manager
+            DownloadManager.start();
         } catch (error) {
             console.error('App initialization error:', error);
             showToast('Failed to initialize app', 'error');
@@ -67,8 +71,8 @@ class AniVaultApp {
 
         // Handle navigation to player
         document.addEventListener('navigateToPlayer', async (e) => {
-            const { libraryItem, episode } = e.detail;
-            await this.loadPlayerScreen(libraryItem, episode);
+            const { libraryItem, episode, allEpisodes } = e.detail;
+            await this.loadPlayerScreen(libraryItem, episode, allEpisodes || []);
         });
 
         // Handle navigation to reader
@@ -154,12 +158,12 @@ class AniVaultApp {
         }
     }
 
-    async loadPlayerScreen(libraryItem, episode) {
+    async loadPlayerScreen(libraryItem, episode, allEpisodes = []) {
         const container = document.getElementById('screen-container');
         this.history.push('player');
         
         try {
-            const playerScreen = new PlayerScreen(libraryItem, episode);
+            const playerScreen = new PlayerScreen(libraryItem, episode, allEpisodes);
             const html = await playerScreen.render();
             container.innerHTML = html;
             await playerScreen.afterRender();

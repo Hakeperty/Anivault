@@ -161,7 +161,8 @@ export class DetailScreen {
                             episode: {
                                 ...episode,
                                 source: episode.source || this.item.source || this.source || 'aniwatch'
-                            }
+                            },
+                            allEpisodes: this.episodes
                         }
                     }));
                 }

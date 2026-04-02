@@ -9,13 +9,17 @@ import { SearchCoordinator } from '../scrapers/coordinator.js';
 const HLS_CDN = 'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js';
 
 export class PlayerScreen {
-    constructor(libraryItem, episode) {
+    constructor(libraryItem, episode, allEpisodes = []) {
         this.libraryItem = libraryItem;
         this.episode = episode;
+        this.allEpisodes = allEpisodes; // for auto-play next
         this.hls = null;
         this.progressInterval = null;
         this.controlsTimeout = null;
         this.controlsVisible = true;
+        this.playbackRate = 1;
+        this._skipIntroDismissed = false;
+        this._autoPlayTimer = null;
     }
 
     async render() {
@@ -40,11 +44,22 @@ export class PlayerScreen {
                 <!-- Video element -->
                 <video id="player-video" playsinline></video>
 
+                <!-- Skip intro button (shown 0:00–1:30) -->
+                <button id="player-skip-intro" class="player-skip-intro" style="display:none">Skip Intro ▸</button>
+
+                <!-- Auto-play next overlay -->
+                <div id="player-autoplay" class="player-overlay" style="display:none">
+                    <p style="font-size:16px;margin-bottom:8px">Next episode in <span id="autoplay-countdown">5</span>s</p>
+                    <button class="btn btn-primary btn-small" id="autoplay-now">Play Now</button>
+                    <button class="btn btn-secondary btn-small" id="autoplay-cancel" style="margin-top:8px">Cancel</button>
+                </div>
+
                 <!-- Custom controls -->
                 <div id="player-controls" class="player-controls-bar">
                     <div class="player-controls-top">
                         <button class="btn btn-secondary btn-small" id="player-back-btn">← Back</button>
                         <span class="player-title">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
+                        <button class="player-ctrl-btn" id="player-speed-btn" title="Playback Speed" style="margin-left:auto;font-size:13px;min-width:44px;">1x</button>
                     </div>
                     <div class="player-controls-center" id="player-center">
                         <button class="player-ctrl-btn" id="player-rw">
@@ -94,6 +109,7 @@ export class PlayerScreen {
         this._saveProgress(true);
         if (this.progressInterval) clearInterval(this.progressInterval);
         if (this.controlsTimeout) clearTimeout(this.controlsTimeout);
+        if (this._autoPlayTimer) clearInterval(this._autoPlayTimer);
         if (this.hls) {
             this.hls.destroy();
             this.hls = null;
@@ -269,13 +285,20 @@ export class PlayerScreen {
         });
         playerScreen?.addEventListener('mousemove', showControls);
         playerScreen?.addEventListener('touchstart', showControls, { passive: true });
+
+        // Speed, skip intro, autoplay hooks
+        this._setupSpeedButton(video);
+        this._setupSkipIntro(video);
     }
 
     /* ── Progress save / restore ── */
 
     _startProgressSaving(video) {
         this.progressInterval = setInterval(() => this._saveProgress(false, video), 10000);
-        video.addEventListener('ended', () => this._saveProgress(true, video));
+        video.addEventListener('ended', () => {
+            this._saveProgress(true, video);
+            this._showAutoPlayNext();
+        });
     }
 
     async _saveProgress(force = false, video = null) {
@@ -311,6 +334,88 @@ export class PlayerScreen {
         } catch {
             // No saved progress
         }
+    }
+
+    /* ── Playback speed ── */
+
+    _setupSpeedButton(video) {
+        const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+        const btn = document.getElementById('player-speed-btn');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            const idx = speeds.indexOf(this.playbackRate);
+            this.playbackRate = speeds[(idx + 1) % speeds.length];
+            video.playbackRate = this.playbackRate;
+            btn.textContent = `${this.playbackRate}x`;
+        });
+    }
+
+    /* ── Skip intro (visible 0:00–1:30) ── */
+
+    _setupSkipIntro(video) {
+        const btn = document.getElementById('player-skip-intro');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            video.currentTime = 90; // skip to 1:30
+            btn.style.display = 'none';
+            this._skipIntroDismissed = true;
+        });
+        video.addEventListener('timeupdate', () => {
+            if (this._skipIntroDismissed) return;
+            const t = video.currentTime;
+            btn.style.display = (t >= 0 && t <= 90) ? '' : 'none';
+        });
+    }
+
+    /* ── Auto-play next episode ── */
+
+    _showAutoPlayNext() {
+        const epNum = Number(this.episode.number ?? this.episode.episode ?? 0);
+        const nextEp = this.allEpisodes.find(e => {
+            const n = Number(e.number ?? e.episode ?? 0);
+            return n === epNum + 1;
+        });
+        if (!nextEp) return; // no next episode
+
+        const overlay = document.getElementById('player-autoplay');
+        const countdownEl = document.getElementById('autoplay-countdown');
+        if (!overlay || !countdownEl) return;
+
+        overlay.style.display = '';
+        let secs = 5;
+        countdownEl.textContent = secs;
+
+        this._autoPlayTimer = setInterval(() => {
+            secs--;
+            countdownEl.textContent = secs;
+            if (secs <= 0) {
+                clearInterval(this._autoPlayTimer);
+                this._playNextEpisode(nextEp);
+            }
+        }, 1000);
+
+        document.getElementById('autoplay-now')?.addEventListener('click', () => {
+            clearInterval(this._autoPlayTimer);
+            this._playNextEpisode(nextEp);
+        });
+        document.getElementById('autoplay-cancel')?.addEventListener('click', () => {
+            clearInterval(this._autoPlayTimer);
+            overlay.style.display = 'none';
+        });
+    }
+
+    _playNextEpisode(nextEp) {
+        this._cleanup();
+        document.dispatchEvent(new CustomEvent('navigateToPlayer', {
+            detail: {
+                libraryItem: this.libraryItem,
+                episode: {
+                    ...nextEp,
+                    source: nextEp.source || this.episode.source || this.libraryItem?.source || 'aniwatch'
+                },
+                allEpisodes: this.allEpisodes
+            }
+        }));
     }
 
     /* ── Helpers ── */
@@ -387,6 +492,13 @@ export class PlayerScreen {
                 border-radius:50%; background:var(--accent-primary,#FF6B35);
                 cursor:pointer;
             }
+            .player-skip-intro {
+                position:absolute; bottom:100px; right:16px; z-index:15;
+                background:rgba(255,107,53,.9); color:#fff; border:none;
+                padding:10px 20px; border-radius:6px; font-size:14px;
+                font-weight:600; cursor:pointer; backdrop-filter:blur(4px);
+            }
+            .player-skip-intro:active { transform:scale(.95); }
         `;
         document.head.appendChild(style);
     }

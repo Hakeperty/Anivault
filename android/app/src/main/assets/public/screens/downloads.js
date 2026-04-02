@@ -4,10 +4,12 @@
 
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
+import { DownloadManager } from '../utils/downloader.js';
 
 export class DownloadsScreen {
     constructor() {
         this.downloads = [];
+        this._refreshTimer = null;
     }
 
     async render() {
@@ -119,17 +121,28 @@ export class DownloadsScreen {
     }
 
     async afterRender() {
+        // Auto-refresh while there are active downloads
+        if (this._refreshTimer) clearInterval(this._refreshTimer);
+        const hasActive = this.downloads.some(d => d.status === 'downloading' || d.status === 'queued');
+        if (hasActive) {
+            this._refreshTimer = setInterval(() => this.refresh(), 2000);
+        }
+
         document.querySelectorAll('.dl-delete-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                await this.deleteDownload(btn.dataset.dlId);
+                const dlId = btn.dataset.dlId;
+                await DownloadManager.cancel(dlId);
+                await this.deleteDownload(dlId);
             });
         });
 
         document.querySelectorAll('.dl-retry-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                await this.retryDownload(btn.dataset.dlId);
+                await DownloadManager.retry(btn.dataset.dlId);
+                showToast('Download requeued', 'info');
+                await this.refresh();
             });
         });
 
@@ -144,17 +157,6 @@ export class DownloadsScreen {
         } catch (err) {
             console.error('Failed to delete download:', err);
             showToast('Failed to remove download', 'error');
-        }
-    }
-
-    async retryDownload(id) {
-        try {
-            await db.updateDownload(id, { status: 'queued', progress: 0 });
-            showToast('Download requeued', 'info');
-            await this.refresh();
-        } catch (err) {
-            console.error('Failed to retry download:', err);
-            showToast('Failed to retry', 'error');
         }
     }
 
