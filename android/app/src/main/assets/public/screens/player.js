@@ -112,7 +112,10 @@ export class PlayerScreen {
         errorEl.style.display = 'none';
 
         try {
-            const streamData = await SearchCoordinator.getAnimeStreamUrl(this.episode.url);
+            const streamData = await SearchCoordinator.getAnimeStreamUrl(
+                this.episode.episodeId || this.episode.id || this.episode.url,
+                this.episode.source || this.libraryItem?.source || 'aniwatch'
+            );
             if (!streamData || !streamData.url) throw new Error('No stream URL returned');
 
             const streamUrl = streamData.url;

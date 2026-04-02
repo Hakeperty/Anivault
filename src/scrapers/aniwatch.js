@@ -161,7 +161,7 @@ export class AniWatchScraper {
 
     static async getEpisodes(id) {
         try {
-            const cleanId = id.replace(/^\/+/, '').replace(/\?ref=.*$/, '');
+            const cleanId = this._extractAnimeSlug(id);
             if (await this._checkBackend()) {
                 try {
                     const data = await this._backendGet(`/anime/${cleanId}/episodes`);
@@ -182,26 +182,32 @@ export class AniWatchScraper {
     static _mapBackendEpisodes(data, animeSlug) {
         const episodes = data?.episodes || data || [];
         if (!Array.isArray(episodes)) return [];
-        return episodes.map(ep => ({
-            number: ep.number || 0,
-            title: ep.title || `Episode ${ep.number}`,
-            url: `https://aniwatchtv.to/watch/${animeSlug}?ep=${ep.episodeId || ep.number}`,
-            id: ep.episodeId || `${animeSlug}?ep=${ep.number}`,
-            episodeId: ep.episodeId || '',
-            isFiller: ep.isFiller || false
-        })).sort((a, b) => a.number - b.number);
+        return episodes.map((ep, index) => {
+            const number = Number(ep.number) || (index + 1);
+            const normalizedEpisodeId = this._extractEpisodeId(ep.episodeId || ep.id || number);
+            return {
+                number,
+                title: ep.title || `Episode ${number}`,
+                url: `https://aniwatchtv.to/watch/${animeSlug}?ep=${normalizedEpisodeId || number}`,
+                id: normalizedEpisodeId || `${animeSlug}?ep=${number}`,
+                episodeId: normalizedEpisodeId || '',
+                sourceEpisodeId: ep.episodeId || '',
+                isFiller: ep.isFiller || false
+            };
+        }).sort((a, b) => a.number - b.number);
     }
 
     // ─── Stream URL (direct mirror only — backend doesn't do streaming) ───
 
     static async getStreamUrl(episodeId) {
         try {
-            const cleanId = String(episodeId).replace(/^\/+/, '');
+            const cleanId = this._extractEpisodeId(episodeId);
+            if (!cleanId) return { url: null, quality: 'auto', type: 'hls' };
             const base = this._workingMirror || MIRRORS[0];
 
             const serversUrl = `${base}/ajax/v2/episode/servers?episodeId=${encodeURIComponent(cleanId)}`;
             const serversResp = await http.get(serversUrl, {
-                'Referer': `${base}/watch/${cleanId}`,
+                'Referer': `${base}/watch/?ep=${cleanId}`,
                 'X-Requested-With': 'XMLHttpRequest',
                 'Accept': 'application/json, text/javascript, */*; q=0.01'
             });
@@ -219,7 +225,7 @@ export class AniWatchScraper {
 
             const sourcesUrl = `${base}/ajax/v2/episode/sources?id=${encodeURIComponent(serverId)}`;
             const sourcesResp = await http.get(sourcesUrl, {
-                'Referer': `${base}/watch/${cleanId}`,
+                'Referer': `${base}/watch/?ep=${cleanId}`,
                 'X-Requested-With': 'XMLHttpRequest',
                 'Accept': 'application/json, text/javascript, */*; q=0.01'
             });
@@ -383,12 +389,68 @@ export class AniWatchScraper {
     static _parseServers(html) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-        for (const sel of ['.servers-sub .server-item', '.servers-dub .server-item', '.server-item']) {
-            for (const s of doc.querySelectorAll(sel)) {
+        const selectors = [
+            '.servers-sub .server-item[data-id]',
+            '.servers-raw .server-item[data-id]',
+            '.servers-dub .server-item[data-id]',
+            '.server-item[data-id]',
+            '.server-item[data-server-id]'
+        ];
+
+        for (const sel of selectors) {
+            const matches = doc.querySelectorAll(sel);
+            for (const s of matches) {
                 const id = s.getAttribute('data-id') || s.getAttribute('data-server-id');
-                if (id) return id;
+                if (id && /^\d+$/.test(String(id))) return String(id);
             }
         }
         return null;
+    }
+
+    static _extractEpisodeId(value) {
+        if (value === null || value === undefined) return '';
+        const text = String(value).trim();
+        if (!text) return '';
+        if (/^\d+$/.test(text)) return text;
+
+        const epMatch = text.match(/[?&]ep=(\d+)/i);
+        if (epMatch) return epMatch[1];
+
+        const idMatch = text.match(/[?&]id=(\d+)/i);
+        if (idMatch) return idMatch[1];
+
+        try {
+            const parsed = new URL(text);
+            const epFromUrl = parsed.searchParams.get('ep');
+            if (epFromUrl && /^\d+$/.test(epFromUrl)) return epFromUrl;
+            const idFromUrl = parsed.searchParams.get('id');
+            if (idFromUrl && /^\d+$/.test(idFromUrl)) return idFromUrl;
+        } catch (_) {}
+
+        const tailMatch = text.match(/(\d+)$/);
+        if (tailMatch) return tailMatch[1];
+
+        return '';
+    }
+
+    static _extractAnimeSlug(value) {
+        if (!value) return '';
+        let text = String(value).trim();
+        if (!text) return '';
+
+        if (/^https?:\/\//i.test(text)) {
+            try {
+                const parsed = new URL(text);
+                text = parsed.pathname || '';
+            } catch (_) {
+                return '';
+            }
+        }
+
+        text = text.replace(/^\/+/, '').replace(/^watch\//, '');
+        text = text.split('?')[0].split('#')[0].replace(/\/+$/, '');
+        if (/^[a-z0-9-]+-\d+$/i.test(text)) return text;
+        const slugMatch = text.match(/([a-z0-9-]+-\d+)$/i);
+        return slugMatch ? slugMatch[1] : '';
     }
 }

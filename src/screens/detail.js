@@ -14,6 +14,7 @@ export class DetailScreen {
         this.chapters = [];
         this.isInLibrary = false;
         this.isLoadingContent = false;
+        this._downloadBtnState = 'idle';
     }
 
     async render() {
@@ -62,6 +63,9 @@ export class DetailScreen {
                                 <button id="library-btn" class="btn ${this.isInLibrary ? 'btn-secondary' : 'btn-primary'}">
                                     ${this.isInLibrary ? 'In Library' : 'Add to Library'}
                                 </button>
+                                <button id="download-btn" class="btn btn-secondary">
+                                    Download
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -93,6 +97,7 @@ export class DetailScreen {
 
         // Library button
         document.getElementById('library-btn')?.addEventListener('click', () => this.toggleLibrary());
+        document.getElementById('download-btn')?.addEventListener('click', () => this.openDownloadPicker());
 
         // Load episodes/chapters
         this.loadContent();
@@ -106,13 +111,21 @@ export class DetailScreen {
         try {
             if (type === 'anime') {
                 this.episodes = await SearchCoordinator.getAnimeEpisodes(
-                    this.item.id, this.item.url, this.item.source
+                    this.item.id, this.item.url, this.item.source, this.item.title
                 );
+                this.episodes = this.episodes.map((ep) => ({
+                    ...ep,
+                    source: this.item.source || this.source || 'aniwatch'
+                }));
                 this.renderEpisodes(container);
             } else {
                 this.chapters = await SearchCoordinator.getMangaChapters(
                     this.item.id, this.item.source, this.item.url
                 );
+                this.chapters = this.chapters.map((ch) => ({
+                    ...ch,
+                    source: ch.source || this.item.source || this.source || 'mangakatana'
+                }));
                 this.renderChapters(container);
             }
         } catch (error) {
@@ -143,7 +156,13 @@ export class DetailScreen {
                 const episode = this.episodes.find(e => String(e.episode || e.number) === epNum);
                 if (episode) {
                     document.dispatchEvent(new CustomEvent('navigateToPlayer', {
-                        detail: { libraryItem: this.item, episode }
+                        detail: {
+                            libraryItem: this.item,
+                            episode: {
+                                ...episode,
+                                source: episode.source || this.item.source || this.source || 'aniwatch'
+                            }
+                        }
                     }));
                 }
             });
@@ -173,7 +192,13 @@ export class DetailScreen {
                 const chapter = this.chapters.find(c => c.id === chId);
                 if (chapter) {
                     document.dispatchEvent(new CustomEvent('navigateToReader', {
-                        detail: { libraryItem: this.item, chapter }
+                        detail: {
+                            libraryItem: this.item,
+                            chapter: {
+                                ...chapter,
+                                source: chapter.source || this.item.source || this.source || 'mangakatana'
+                            }
+                        }
                     }));
                 }
             });
@@ -216,6 +241,120 @@ export class DetailScreen {
         }
     }
 
+    async openDownloadPicker() {
+        const type = this.item.type || 'anime';
+        const list = type === 'anime' ? this.episodes : this.chapters;
+        if (!list || list.length === 0) {
+            showToast(`No ${type === 'anime' ? 'episodes' : 'chapters'} available to download`, 'error');
+            return;
+        }
+
+        const dialog = document.createElement('div');
+        dialog.className = 'delete-dialog';
+        dialog.innerHTML = `
+            <div class="dialog-content detail-download-dialog">
+                <p>Choose ${type === 'anime' ? 'episode' : 'chapter'} to download</p>
+                <div class="detail-download-list">
+                    ${list.slice(0, 100).map((entry) => {
+                        const label = type === 'anime'
+                            ? `Episode ${entry.number ?? entry.episode ?? '?'}`
+                            : `Chapter ${entry.chapter ?? '?'}`;
+                        const subtitle = this._esc(entry.title || '');
+                        const id = this._esc(entry.id || entry.url || '');
+                        return `
+                            <button class="detail-download-item" data-entry-id="${id}">
+                                <span class="detail-download-item-title">${label}</span>
+                                ${subtitle ? `<span class="detail-download-item-sub">${subtitle}</span>` : ''}
+                            </button>
+                        `;
+                    }).join('')}
+                </div>
+                <div class="dialog-actions">
+                    <button class="btn btn-secondary" data-action="cancel">Cancel</button>
+                </div>
+            </div>
+        `;
+
+        const close = () => dialog.remove();
+        dialog.querySelector('[data-action="cancel"]')?.addEventListener('click', close);
+        dialog.addEventListener('click', (e) => { if (e.target === dialog) close(); });
+
+        dialog.querySelectorAll('.detail-download-item').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const entryId = btn.getAttribute('data-entry-id');
+                const selected = list.find((entry) => String(entry.id || entry.url || '') === entryId);
+                if (!selected) return;
+                await this.queueDownload(selected, type);
+                close();
+            });
+        });
+
+        document.body.appendChild(dialog);
+    }
+
+    async queueDownload(entry, type) {
+        const downloadBtn = document.getElementById('download-btn');
+        if (this._downloadBtnState === 'busy') return;
+        this._downloadBtnState = 'busy';
+        if (downloadBtn) {
+            downloadBtn.disabled = true;
+            downloadBtn.textContent = 'Queuing...';
+        }
+
+        try {
+            const source = this.item.source || this.source || (type === 'anime' ? 'aniwatch' : 'mangakatana');
+            const itemId = this.item.id;
+            const token = type === 'anime'
+                ? `ep-${entry.number ?? entry.episode ?? '?'}`
+                : `ch-${entry.chapter ?? '?'}`;
+            const readable = entry.title || token;
+            const entryId = entry.id || entry.url || token;
+            const localPath = entry.url || entry.id || '';
+
+            // Ensure item exists in library for Downloads linkage
+            const existing = await db.getLibraryItem(itemId);
+            if (!existing) {
+                await db.addToLibrary({
+                    id: this.item.id,
+                    title: this.item.title,
+                    coverImage: this.item.coverImage || this.item.coverUrl || '',
+                    description: this.item.description || '',
+                    type: this.item.type || type,
+                    source,
+                    url: this.item.url || '',
+                    genres: this.item.genres || [],
+                    episodes: this.item.episodes || null,
+                    chapters: this.item.chapters || null
+                });
+                this.isInLibrary = true;
+                const libraryBtn = document.getElementById('library-btn');
+                if (libraryBtn) {
+                    libraryBtn.className = 'btn btn-secondary';
+                    libraryBtn.textContent = 'In Library';
+                }
+            }
+
+            const queued = await db.addDownload(itemId, `${token} - ${readable}`, localPath, 0);
+            await db.updateDownload(queued.id, {
+                status: 'queued',
+                progress: 0,
+                source,
+                sourceId: entryId,
+                itemType: type
+            });
+            showToast('Download queued', 'success');
+        } catch (error) {
+            console.error('Failed to queue download:', error);
+            showToast('Failed to queue download', 'error');
+        } finally {
+            this._downloadBtnState = 'idle';
+            if (downloadBtn) {
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = 'Download';
+            }
+        }
+    }
+
     formatSource(source) {
         const names = {
             hianime: 'HiAnime',
@@ -225,5 +364,11 @@ export class DetailScreen {
             library: 'Library'
         };
         return names[source] || source;
+    }
+
+    _esc(str) {
+        const div = document.createElement('div');
+        div.textContent = str || '';
+        return div.innerHTML;
     }
 }

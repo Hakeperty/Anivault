@@ -91,8 +91,24 @@ export class SearchCoordinator {
         }
     }
 
-    static async getAnimeEpisodes(animeId, animeUrl, source = 'aniwatch') {
+    static async getAnimeEpisodes(animeId, animeUrl, source = 'aniwatch', animeTitle = '') {
+        const fromId = this._extractAniwatchSlug(animeId);
+        const fromUrl = this._extractAniwatchSlug(animeUrl);
+        const targetSlug = fromId || fromUrl;
+
         try {
+            if (targetSlug) {
+                return await AniWatchScraper.getEpisodes(targetSlug);
+            }
+
+            if (animeTitle) {
+                const searchResults = await AniWatchScraper.search(animeTitle);
+                const bestMatch = searchResults.find((item) => this._titlesMatch(item?.title, animeTitle)) || searchResults[0];
+                if (bestMatch?.id) {
+                    return await AniWatchScraper.getEpisodes(bestMatch.id);
+                }
+            }
+
             return await AniWatchScraper.getEpisodes(animeId || animeUrl);
         } catch (error) {
             console.error('Failed to get episodes:', error);
@@ -144,9 +160,9 @@ export class SearchCoordinator {
         }
     }
 
-    static async getAnimeStreamUrl(episodeUrl, source = 'aniwatch') {
+    static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch') {
         try {
-            return await AniWatchScraper.getStreamUrl(episodeUrl);
+            return await AniWatchScraper.getStreamUrl(episodeOrId);
         } catch (error) {
             console.error('Failed to get stream URL:', error);
             return null;
@@ -171,5 +187,28 @@ export class SearchCoordinator {
         if (!a || !b) return false;
         const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
         return normalize(a) === normalize(b);
+    }
+
+    static _extractAniwatchSlug(value) {
+        if (!value) return '';
+        let text = String(value).trim();
+        if (!text) return '';
+
+        if (/^https?:\/\//i.test(text)) {
+            try {
+                const parsed = new URL(text);
+                text = parsed.pathname || '';
+            } catch (_) {
+                return '';
+            }
+        }
+
+        text = text.replace(/^\/+/, '');
+        text = text.replace(/^watch\//, '');
+        text = text.split('?')[0].split('#')[0].replace(/\/+$/, '');
+        if (!text) return '';
+        if (/^[a-z0-9-]+-\d+$/i.test(text)) return text;
+        const slugMatch = text.match(/([a-z0-9-]+-\d+)$/i);
+        return slugMatch ? slugMatch[1] : '';
     }
 }

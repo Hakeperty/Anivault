@@ -907,6 +907,56 @@ p {
 
 .detail-actions {
     margin-top: 4px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.detail-actions .btn {
+    flex: 1;
+    min-width: 120px;
+}
+
+.detail-download-dialog {
+    width: min(92vw, 420px);
+    max-width: min(92vw, 420px);
+    text-align: left;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.detail-download-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    max-height: 52vh;
+}
+
+.detail-download-item {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.detail-download-item-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.detail-download-item-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
 }
 
 .detail-section {
