@@ -92,7 +92,7 @@ export class SettingsScreen {
                     <div class="settings-item static">
                         <div class="settings-item-info">
                             <span class="settings-item-title">Anime</span>
-                            <span class="settings-item-desc">Jikan (MAL), AniWatch (aniwatch.to)</span>
+                            <span class="settings-item-desc">AniWatch (aniwatch.to via local backend + mirrors)</span>
                         </div>
                     </div>
                     <div class="settings-item static">

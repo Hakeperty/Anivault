@@ -5,7 +5,7 @@
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.4.0';
 
 const SETTING_DEFAULTS = {
     videoQuality: 'auto',
@@ -92,13 +92,13 @@ export class SettingsScreen {
                     <div class="settings-item static">
                         <div class="settings-item-info">
                             <span class="settings-item-title">Anime</span>
-                            <span class="settings-item-desc">HiAnime, AniWatch</span>
+                            <span class="settings-item-desc">AniWatch (aniwatch.to via local backend + mirrors)</span>
                         </div>
                     </div>
                     <div class="settings-item static">
                         <div class="settings-item-info">
                             <span class="settings-item-title">Manga</span>
-                            <span class="settings-item-desc">MangaDex, MangaKatana</span>
+                            <span class="settings-item-desc">MangaDex API, MangaKatana</span>
                         </div>
                     </div>
                 </div>

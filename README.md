@@ -21,10 +21,9 @@ A fully-functional, client-side anime and manga discovery and library management
 
 ### 🔍 Multi-Source Search
 Search across **3+ anime and manga sources simultaneously**:
-- **HiAnime** - Anime database with CORS proxy support
-- **AniWatch** - Secondary anime source with stream extraction
+- **AniWatch** - Primary anime metadata source (local backend + mirror fallback)
 - **MangaDex** - Official manga REST API integration
-- **MangaKatana** - Fallback manga scraper
+- **MangaKatana** - Primary manga scraper
 
 ### 💾 Local Storage
 - **IndexedDB** - 4 stores: Library, Progress, Downloads, Settings
@@ -106,10 +105,9 @@ anivault/
 │   │   └── settings.js         🔶 UI stub
 │   ├── scrapers/               ← Multi-source content
 │   │   ├── coordinator.js      ← Orchestration (5.1 KB)
-│   │   ├── hianime.js          ← Anime (4.7 KB)
-│   │   ├── aniwatch.js         ← Anime alt (5.2 KB) ⭐ NEW
-│   │   ├── mangadex.js         ← Manga API (6.4 KB)
-│   │   └── mangakatana.js      ← Manga fallback (5.2 KB)
+│   │   ├── aniwatch.js         ← Anime primary scraper (backend + mirrors)
+│   │   ├── mangakatana.js      ← Manga primary scraper
+│   │   └── mangadex.js         ← Manga secondary API source
 │   ├── db/
 │   │   └── indexeddb.js        ← Database (10.7 KB)
 │   └── utils/
@@ -167,7 +165,7 @@ anivault/
   id: 'demon-slayer-1',
   title: 'Demon Slayer',
   type: 'anime',
-  source: 'hianime',
+  source: 'aniwatch',
   coverUrl: 'https://...',
   description: 'A boy joins...',
   genres: ['Action', 'Supernatural'],
@@ -233,14 +231,13 @@ await db.saveSetting('quality', '720p');
 ### Anime Sources
 | Source | Type | Status | Features |
 |--------|------|--------|----------|
-| HiAnime | Scraping | ✅ Active | Episodes, streams, metadata |
-| AniWatch | Scraping | ✅ Active | Episodes, streams, genres |
+| AniWatch | Scraping + local metadata backend | ✅ Active | Metadata, episodes, mirror fallback |
 
 ### Manga Sources
 | Source | Type | Status | Features |
 |--------|------|--------|----------|
-| MangaDex | Official API | ✅ Active | Chapters, pages, metadata |
-| MangaKatana | Scraping | ✅ Fallback | Chapters, pages, search |
+| MangaKatana | Scraping | ✅ Primary | Chapters, pages, search |
+| MangaDex | Official API | ✅ Secondary | Chapters, pages, metadata |
 
 ---
 
@@ -346,7 +343,7 @@ export class NewScreen {
 
 ## 📋 Known Limitations
 
-1. **CORS Proxy Dependency** - Uses allorigins.win for HiAnime
+1. **AniWatch Access Variability** - Direct aniwatch.to access can be blocked; local backend and mirror fallback are used.
 2. **HTML Scraping Fragility** - Dependent on site structure
 3. **No Offline Caching** - Needs Service Worker for content caching
 4. **Video Playback** - HLS.js not yet integrated
@@ -374,7 +371,7 @@ export PATH=$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH
 ```
 
 ### "CORS errors in scrapers"
-HiAnime/AniWatch use allorigins.win proxy. If rate-limited, set up a custom proxy.
+AniWatch direct access can be blocked by anti-bot protections. Start the local backend (`start-backend.sh`) so the app can use localhost first.
 
 ### "No results from search"
 Try searching with different terms or switch sources in the coordinator.

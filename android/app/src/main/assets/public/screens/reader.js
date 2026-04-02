@@ -98,7 +98,7 @@ export class ReaderScreen {
     async loadPages() {
         try {
             const chapterId = this.chapter?.id;
-            const source = this.chapter?.source || 'mangadex';
+            const source = this.chapter?.source || this.libraryItem?.source || 'mangakatana';
             this.pages = await SearchCoordinator.getChapterPages(chapterId, source);
 
             if (!this.pages || this.pages.length === 0) {

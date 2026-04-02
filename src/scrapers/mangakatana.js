@@ -103,11 +103,12 @@ export class MangaKatanaScraper {
         const chapters = [];
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
+        const resolvedBaseUrl = baseUrl || doc.querySelector('link[rel="canonical"]')?.getAttribute('href') || '';
 
         // Method 1: select.chapter_select options (most reliable on chapter reader pages)
         const selectOptions = doc.querySelectorAll('select.chapter_select option[value]');
         if (selectOptions.length > 0) {
-            const mangaUrlBase = baseUrl.replace(/\/c[\d.]+$/, '');
+            const mangaUrlBase = resolvedBaseUrl.replace(/\/c[\d.]+$/, '');
             selectOptions.forEach((opt) => {
                 const val = opt.getAttribute('value');
                 if (!val) return;
@@ -115,11 +116,15 @@ export class MangaKatanaScraper {
                 const numMatch = text.match(/chapter\s*([\d.]+)/i);
                 const chapterNum = numMatch ? parseFloat(numMatch[1]) : null;
                 if (chapterNum === null) return;
+                const chapterUrl = val.startsWith('http') ? val : `${mangaUrlBase}/${val}`.replace(/([^:]\/)\/+/g, '$1');
+                const chapterId = chapterUrl;
 
                 chapters.push({
+                    id: chapterId,
                     chapter: chapterNum,
-                    url: `${mangaUrlBase}/${val}`,
-                    title: text
+                    url: chapterUrl,
+                    title: text,
+                    source: 'mangakatana'
                 });
             });
         }
@@ -136,11 +141,15 @@ export class MangaKatanaScraper {
                     if (chapterNum === null) return;
                     // Avoid duplicates
                     if (chapters.some(c => c.chapter === chapterNum)) return;
+                    const chapterUrl = href.startsWith('http') ? href : `${MANGAKATANA_BASE}${href}`;
+                    const chapterId = chapterUrl;
 
                     chapters.push({
+                        id: chapterId,
                         chapter: chapterNum,
-                        url: href.startsWith('http') ? href : `${MANGAKATANA_BASE}${href}`,
-                        title: text || `Chapter ${chapterNum}`
+                        url: chapterUrl,
+                        title: text || `Chapter ${chapterNum}`,
+                        source: 'mangakatana'
                     });
                 } catch (e) {
                     console.debug('Chapter parse error:', e);

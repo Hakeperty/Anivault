@@ -9,6 +9,7 @@ import { http } from '../utils/http.js';
 
 // Local backend (Termux) — primary source
 const BACKEND_URL = 'http://localhost:6969/api';
+const BACKEND_RECHECK_MS = 15000;
 
 // Mirror fallback for direct scraping if backend is down
 const MIRRORS = [
@@ -19,6 +20,7 @@ const MIRRORS = [
 
 export class AniWatchScraper {
     static _backendAvailable = null; // null = untested, true/false
+    static _backendLastCheck = 0;
     static _workingMirror = null;
 
     // ─── Backend helpers ───
@@ -26,20 +28,34 @@ export class AniWatchScraper {
     static async _backendGet(path) {
         const url = `${BACKEND_URL}${path}`;
         const result = await http.get(url, { 'Accept': 'application/json' }, 5000);
+        if (result.status < 200 || result.status >= 300) {
+            throw new Error(`Backend HTTP ${result.status}`);
+        }
         const data = result.json || JSON.parse(result.data);
-        if (!data.success) throw new Error(data.error || 'Backend returned error');
-        return data.data;
+        if (data?.success === false) throw new Error(data.error || 'Backend returned error');
+        return data?.data ?? data;
     }
 
-    static async _checkBackend() {
-        if (this._backendAvailable !== null) return this._backendAvailable;
+    static async _checkBackend(force = false) {
+        const now = Date.now();
+        if (!force && this._backendAvailable !== null && (now - this._backendLastCheck) < BACKEND_RECHECK_MS) {
+            return this._backendAvailable;
+        }
+
+        this._backendLastCheck = now;
         try {
-            await http.get(`${BACKEND_URL}/health`, {}, 3000);
-            this._backendAvailable = true;
-            console.log('[AniWatch] Backend available at localhost:6969');
-        } catch {
+            const health = await http.get(`${BACKEND_URL}/health`, { 'Accept': 'application/json' }, 3000);
+            const parsed = health.json || JSON.parse(health.data || '{}');
+            this._backendAvailable = health.status >= 200 && health.status < 300 &&
+                (parsed?.status === 'ok' || parsed?.success === true);
+            if (this._backendAvailable) {
+                console.log('[AniWatch] Backend available at localhost:6969');
+            } else {
+                console.log('[AniWatch] Backend health check failed, using direct scraping');
+            }
+        } catch (e) {
             this._backendAvailable = false;
-            console.log('[AniWatch] Backend not available, using direct scraping');
+            console.log('[AniWatch] Backend not available, using direct scraping:', e?.message || e);
         }
         return this._backendAvailable;
     }
@@ -56,6 +72,7 @@ export class AniWatchScraper {
                 } catch (e) {
                     console.warn('[AniWatch] Backend search failed, trying mirrors:', e.message);
                     this._backendAvailable = false;
+                    this._backendLastCheck = Date.now();
                 }
             }
             // Fallback: direct mirror scraping
@@ -67,7 +84,8 @@ export class AniWatchScraper {
     }
 
     static _mapBackendSearchResults(data) {
-        const animes = data.animes || data.results || [];
+        const animes = data?.animes || data?.results || data?.mostPopularAnimes || [];
+        if (!Array.isArray(animes)) return [];
         return animes.map(a => ({
             id: a.id || '',
             title: a.name || a.title || '',
@@ -102,6 +120,8 @@ export class AniWatchScraper {
                     return this._mapBackendInfo(data, cleanId);
                 } catch (e) {
                     console.warn('[AniWatch] Backend info failed:', e.message);
+                    this._backendAvailable = false;
+                    this._backendLastCheck = Date.now();
                 }
             }
             return await this._getDetailsDirect(cleanId);
@@ -130,7 +150,7 @@ export class AniWatchScraper {
             rating: info.stats?.rating || moreInfo.malscore || 'N/A',
             status: moreInfo.status || 'Unknown',
             quality: info.stats?.quality || '',
-            studios: moreInfo.studios || '',
+            studios: Array.isArray(moreInfo.studios) ? moreInfo.studios.join(', ') : (moreInfo.studios || ''),
             duration: moreInfo.duration || info.stats?.duration || '',
             aired: moreInfo.aired || '',
             premiered: moreInfo.premiered || ''
@@ -148,6 +168,8 @@ export class AniWatchScraper {
                     return this._mapBackendEpisodes(data, cleanId);
                 } catch (e) {
                     console.warn('[AniWatch] Backend episodes failed:', e.message);
+                    this._backendAvailable = false;
+                    this._backendLastCheck = Date.now();
                 }
             }
             return await this._getEpisodesDirect(cleanId);
@@ -158,7 +180,8 @@ export class AniWatchScraper {
     }
 
     static _mapBackendEpisodes(data, animeSlug) {
-        const episodes = data.episodes || [];
+        const episodes = data?.episodes || data || [];
+        if (!Array.isArray(episodes)) return [];
         return episodes.map(ep => ({
             number: ep.number || 0,
             title: ep.title || `Episode ${ep.number}`,

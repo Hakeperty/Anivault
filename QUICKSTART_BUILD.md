@@ -31,7 +31,7 @@ cd android
 ## What You Get
 
 ✅ **Fully functional anime/manga library app** with:
-- Multi-source content search (HiAnime + MangaDex + MangaKatana)
+- Multi-source content search (AniWatch + MangaKatana + MangaDex)
 - IndexedDB local storage with persistence
 - Dark AMOLED UI theme (#0a0a0a / #FF6B35)
 - Library grid with progress tracking
@@ -62,7 +62,7 @@ src/
 ├── main.js                 ← Router (7.8 KB)
 ├── styles/global.css       ← Theme (800 lines)
 ├── screens/                ← 7 screens (library, search, detail, etc)
-├── scrapers/               ← HiAnime, MangaDex, MangaKatana + coordinator
+├── scrapers/               ← AniWatch, MangaKatana, MangaDex + coordinator
 ├── db/indexeddb.js         ← Database (10.7 KB)
 └── utils/toast.js          ← Notifications
 ```
@@ -92,7 +92,12 @@ export PATH=$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH
 Gradle downloads and caches on first run (30-60s), then builds are faster.
 
 ### "CORS errors in scrapers"
-HiAnime uses `allorigins.win` proxy. If rate-limited, set up a custom proxy.
+AniWatch can be blocked directly; run the local backend first:
+
+```bash
+cd /root/anivault
+bash start-backend.sh
+```
 
 ## Next: Enhance the App
 
