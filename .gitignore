@@ -39,3 +39,5 @@ android/local.properties
 # Compiled
 *.o
 *.so
+anivault-backend/node_modules/
+anivault-backend/yarn.lock
