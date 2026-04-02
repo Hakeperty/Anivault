@@ -41,6 +41,15 @@ export class PlayerScreen {
                     <button class="btn btn-secondary btn-small" id="player-error-back-btn" style="margin-top:8px">Go Back</button>
                 </div>
 
+                <!-- Iframe player (for embed streams) -->
+                <iframe id="player-iframe" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#000;z-index:1;" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
+
+                <!-- Iframe overlay controls -->
+                <div id="iframe-controls" style="display:none;position:absolute;top:0;left:0;width:100%;z-index:2;padding:12px;background:linear-gradient(to bottom,rgba(0,0,0,0.7),transparent);">
+                    <button class="btn btn-secondary btn-small" id="iframe-back-btn" style="font-size:14px;">← Back</button>
+                    <span style="color:#fff;margin-left:12px;font-size:14px;">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
+                </div>
+
                 <!-- Video element -->
                 <video id="player-video" playsinline></video>
 
@@ -103,6 +112,7 @@ export class PlayerScreen {
         document.getElementById('player-back-btn')?.addEventListener('click', () => this._goBack());
         document.getElementById('player-error-back-btn')?.addEventListener('click', () => this._goBack());
         document.getElementById('player-retry-btn')?.addEventListener('click', () => this._initPlayer());
+        document.getElementById('iframe-back-btn')?.addEventListener('click', () => this._goBack());
     }
 
     _cleanup() {
@@ -114,6 +124,9 @@ export class PlayerScreen {
             this.hls.destroy();
             this.hls = null;
         }
+        // Clean up iframe
+        const iframe = document.getElementById('player-iframe');
+        if (iframe) iframe.src = 'about:blank';
     }
 
     /* ── Player init ── */
@@ -122,6 +135,7 @@ export class PlayerScreen {
         const loadingEl = document.getElementById('player-loading');
         const errorEl = document.getElementById('player-error');
         const video = document.getElementById('player-video');
+        const iframe = document.getElementById('player-iframe');
         if (!video) return;
 
         loadingEl.style.display = '';
@@ -133,6 +147,36 @@ export class PlayerScreen {
                 this.episode.source || this.libraryItem?.source || 'aniwatch'
             );
             if (!streamData || !streamData.url) throw new Error('No stream URL returned');
+
+            // Iframe embed mode — show embed in full-screen iframe
+            if (streamData.type === 'iframe' && iframe) {
+                video.style.display = 'none';
+                document.getElementById('player-controls')?.style.setProperty('display', 'none');
+                document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
+
+                iframe.style.display = 'block';
+                document.getElementById('iframe-controls').style.display = 'flex';
+                iframe.src = streamData.url;
+
+                // Auto-hide overlay after 5s, tap to toggle
+                let overlayTimer = setTimeout(() => {
+                    document.getElementById('iframe-controls').style.display = 'none';
+                }, 5000);
+                iframe.parentElement.addEventListener('click', (e) => {
+                    if (e.target === iframe) return; // let iframe handle its own clicks
+                    const ctrl = document.getElementById('iframe-controls');
+                    if (ctrl) {
+                        const visible = ctrl.style.display !== 'none';
+                        ctrl.style.display = visible ? 'none' : 'flex';
+                        clearTimeout(overlayTimer);
+                        if (!visible) overlayTimer = setTimeout(() => { ctrl.style.display = 'none'; }, 5000);
+                    }
+                });
+
+                // Hide loading after short delay (iframe won't fire reliable load events)
+                setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
+                return;
+            }
 
             const streamUrl = streamData.url;
             await this._loadHls();

@@ -88,6 +88,11 @@ class AniVaultApp {
     async loadScreen(screenName) {
         const container = document.getElementById('screen-container');
         
+        // Deactivate previous screen if it has a deactivate method
+        if (this.currentScreen?.instance?.deactivate) {
+            try { this.currentScreen.instance.deactivate(); } catch (e) {}
+        }
+
         try {
             let screen;
 
@@ -138,6 +143,9 @@ class AniVaultApp {
 
     async loadDetailScreen(item, source) {
         const container = document.getElementById('screen-container');
+        if (this.currentScreen?.instance?.deactivate) {
+            try { this.currentScreen.instance.deactivate(); } catch (e) {}
+        }
         this.history.push('detail');
         
         try {
@@ -160,6 +168,9 @@ class AniVaultApp {
 
     async loadPlayerScreen(libraryItem, episode, allEpisodes = []) {
         const container = document.getElementById('screen-container');
+        if (this.currentScreen?.instance?.deactivate) {
+            try { this.currentScreen.instance.deactivate(); } catch (e) {}
+        }
         this.history.push('player');
         
         try {
@@ -180,6 +191,9 @@ class AniVaultApp {
 
     async loadReaderScreen(libraryItem, chapter) {
         const container = document.getElementById('screen-container');
+        if (this.currentScreen?.instance?.deactivate) {
+            try { this.currentScreen.instance.deactivate(); } catch (e) {}
+        }
         this.history.push('reader');
         
         try {

@@ -220,36 +220,54 @@ export class AniWatchScraper {
                 serversHtml = serversResp.data || '';
             }
 
-            const serverId = this._parseServers(serversHtml);
-            if (!serverId) return { url: null, quality: 'auto', type: 'hls' };
+            // Try ALL servers in priority order (sub → raw → dub)
+            const serverIds = this._parseAllServers(serversHtml);
+            if (serverIds.length === 0) return { url: null, quality: 'auto', type: 'hls' };
 
-            const sourcesUrl = `${base}/ajax/v2/episode/sources?id=${encodeURIComponent(serverId)}`;
-            const sourcesResp = await http.get(sourcesUrl, {
-                'Referer': `${base}/watch/?ep=${cleanId}`,
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json, text/javascript, */*; q=0.01'
-            });
+            for (const serverId of serverIds) {
+                try {
+                    const sourcesUrl = `${base}/ajax/v2/episode/sources?id=${encodeURIComponent(serverId)}`;
+                    const sourcesResp = await http.get(sourcesUrl, {
+                        'Referer': `${base}/watch/?ep=${cleanId}`,
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json, text/javascript, */*; q=0.01'
+                    });
 
-            let sourcesData = {};
-            try { sourcesData = sourcesResp.json || JSON.parse(sourcesResp.data); } catch {}
+                    let sourcesData = {};
+                    try { sourcesData = sourcesResp.json || JSON.parse(sourcesResp.data); } catch {}
 
-            const link = sourcesData.link || sourcesData.url || '';
-            if (!link) return { url: null, quality: 'auto', type: 'hls' };
+                    const link = sourcesData.link || sourcesData.url || '';
+                    if (!link) continue;
 
-            if (link.includes('.m3u8')) {
-                return { url: link, quality: 'auto', type: 'hls', episodeId: cleanId };
+                    // Direct m3u8
+                    if (link.includes('.m3u8')) {
+                        return { url: link, quality: 'auto', type: 'hls', episodeId: cleanId };
+                    }
+
+                    // Direct mp4
+                    if (link.includes('.mp4')) {
+                        return { url: link, quality: 'auto', type: 'mp4', episodeId: cleanId };
+                    }
+
+                    // Try extracting m3u8 from embed page
+                    try {
+                        const embedHtml = await http.getHTML(link, { 'Referer': `${base}/` });
+                        const m3u8Match = embedHtml.match(/file\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
+                            || embedHtml.match(/source\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
+                            || embedHtml.match(/["'](https?:\/\/[^"']*\.m3u8[^"']*)/i);
+                        if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId };
+                    } catch {}
+
+                    // Return embed URL as iframe type — player will show it in an iframe
+                    if (link.startsWith('http')) {
+                        return { url: link, quality: 'auto', type: 'iframe', episodeId: cleanId };
+                    }
+                } catch (e) {
+                    console.warn('Server failed:', serverId, e.message);
+                }
             }
 
-            // Try extracting stream from embed page
-            try {
-                const embedHtml = await http.getHTML(link, { 'Referer': `${base}/` });
-                const m3u8Match = embedHtml.match(/file\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
-                    || embedHtml.match(/source\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
-                    || embedHtml.match(/["'](https?:\/\/[^"']*\.m3u8[^"']*)/i);
-                if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId };
-            } catch {}
-
-            return { url: link, quality: 'auto', type: link.includes('.mp4') ? 'mp4' : 'hls', episodeId: cleanId };
+            return { url: null, quality: 'auto', type: 'hls' };
         } catch (error) {
             console.error('AniWatch getStreamUrl error:', error);
             return { url: null, quality: 'auto', type: 'hls' };
@@ -387,24 +405,33 @@ export class AniWatchScraper {
     }
 
     static _parseServers(html) {
+        const ids = this._parseAllServers(html);
+        return ids.length > 0 ? ids[0] : null;
+    }
+
+    static _parseAllServers(html) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-        const selectors = [
+        const ids = [];
+        // Priority: sub → raw → dub → any
+        const groups = [
             '.servers-sub .server-item[data-id]',
             '.servers-raw .server-item[data-id]',
             '.servers-dub .server-item[data-id]',
             '.server-item[data-id]',
             '.server-item[data-server-id]'
         ];
-
-        for (const sel of selectors) {
-            const matches = doc.querySelectorAll(sel);
-            for (const s of matches) {
+        const seen = new Set();
+        for (const sel of groups) {
+            for (const s of doc.querySelectorAll(sel)) {
                 const id = s.getAttribute('data-id') || s.getAttribute('data-server-id');
-                if (id && /^\d+$/.test(String(id))) return String(id);
+                if (id && /^\d+$/.test(String(id)) && !seen.has(id)) {
+                    seen.add(id);
+                    ids.push(String(id));
+                }
             }
         }
-        return null;
+        return ids;
     }
 
     static _extractEpisodeId(value) {

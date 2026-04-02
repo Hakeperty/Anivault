@@ -10,6 +10,15 @@ export class DownloadsScreen {
     constructor() {
         this.downloads = [];
         this._refreshTimer = null;
+        this._active = false;
+    }
+
+    deactivate() {
+        this._active = false;
+        if (this._refreshTimer) {
+            clearInterval(this._refreshTimer);
+            this._refreshTimer = null;
+        }
     }
 
     async render() {
@@ -121,11 +130,14 @@ export class DownloadsScreen {
     }
 
     async afterRender() {
+        this._active = true;
         // Auto-refresh while there are active downloads
         if (this._refreshTimer) clearInterval(this._refreshTimer);
         const hasActive = this.downloads.some(d => d.status === 'downloading' || d.status === 'queued');
         if (hasActive) {
-            this._refreshTimer = setInterval(() => this.refresh(), 2000);
+            this._refreshTimer = setInterval(() => {
+                if (this._active) this.refresh();
+            }, 2000);
         }
 
         document.querySelectorAll('.dl-delete-btn').forEach(btn => {
@@ -175,6 +187,7 @@ export class DownloadsScreen {
     }
 
     async refresh() {
+        if (!this._active) return;
         const container = document.getElementById('screen-container');
         if (container) {
             const html = await this.render();
