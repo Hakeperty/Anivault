@@ -30,9 +30,11 @@ yarn-debug.log
 .env.*.local
 
 # Capacitor
-/android
 /ios
 /www
+
+# Android local config (generated per-machine)
+android/local.properties
 
 # Compiled
 *.o

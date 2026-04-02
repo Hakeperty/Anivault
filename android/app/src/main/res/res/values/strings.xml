@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AniVault</string>
+    <string name="title_activity_main">AniVault</string>
+    <string name="package_name">com.anivault.app</string>
+    <string name="custom_url_scheme">com.anivault.app</string>
+</resources>
