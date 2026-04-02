@@ -24,7 +24,7 @@ class AniVaultApp {
         try {
             // Initialize database
             await db.init();
-            console.log('✓ Database initialized');
+            console.log('[DB] initialized');
 
             // Initialize Capacitor if available
             if (window.Capacitor) {
