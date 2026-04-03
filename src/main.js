@@ -200,8 +200,9 @@ class AniVaultApp {
             await playerScreen.afterRender();
             this.currentScreen = { name: 'player', instance: playerScreen };
             
-            // Hide bottom nav for fullscreen
+            // Hide bottom nav and remove safe-area padding for fullscreen
             document.getElementById('bottom-nav').style.display = 'none';
+            document.getElementById('screen-container').classList.add('fullscreen-mode');
         } catch (error) {
             console.error('Error loading player:', error);
             showToast('Failed to load player', 'error');
@@ -223,8 +224,9 @@ class AniVaultApp {
             await readerScreen.afterRender();
             this.currentScreen = { name: 'reader', instance: readerScreen };
             
-            // Hide bottom nav for fullscreen
+            // Hide bottom nav and remove safe-area padding for fullscreen
             document.getElementById('bottom-nav').style.display = 'none';
+            document.getElementById('screen-container').classList.add('fullscreen-mode');
         } catch (error) {
             console.error('Error loading reader:', error);
             showToast('Failed to load reader', 'error');
@@ -236,6 +238,8 @@ class AniVaultApp {
         this.history.pop();
         const previousScreen = this.history[this.history.length - 1];
 
+        document.getElementById('screen-container').classList.remove('fullscreen-mode');
+
         if (previousScreen === 'discover' || previousScreen === 'library' || previousScreen === 'search' || 
             previousScreen === 'downloads' || previousScreen === 'settings') {
             document.getElementById('bottom-nav').style.display = 'flex';
@@ -243,7 +247,6 @@ class AniVaultApp {
         } else if (this.history.length > 1) {
             this.goBack();
         } else {
-            // Always fall back to Discover as home
             document.getElementById('bottom-nav').style.display = 'flex';
             this.loadScreen('discover');
         }

@@ -59,6 +59,12 @@ body {
     padding-top: env(safe-area-inset-top, 0px);
 }
 
+#screen-container.fullscreen-mode {
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+}
+
 /* ========== Bottom Navigation ========== */
 #bottom-nav {
     position: fixed;
