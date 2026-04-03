@@ -164,6 +164,17 @@ body {
     opacity: 0.8;
 }
 
+.btn-recommend-active {
+    background: linear-gradient(135deg, #FFD60A 0%, #FF9F0A 100%);
+    color: #000;
+    font-weight: 700;
+    border: none;
+}
+
+.btn-recommend-active:active {
+    opacity: 0.85;
+}
+
 .badge {
     display: inline-block;
     padding: 4px 8px;
@@ -1396,6 +1407,7 @@ p {
 .section-icon.sparkle { background: rgba(100, 210, 255, 0.15); color: #64D2FF; }
 .section-icon.calendar { background: rgba(255, 159, 10, 0.15); color: #FF9F0A; }
 .section-icon.recommend { background: rgba(50, 215, 75, 0.15); color: #32D74B; }
+.section-icon.user-recommend { background: rgba(255, 214, 10, 0.15); color: #FFD60A; }
 
 .discover-row {
     display: flex;

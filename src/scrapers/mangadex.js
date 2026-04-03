@@ -33,21 +33,42 @@ export class MangaDexScraper {
     }
 
     /**
-     * Search for manga on MangaDex
+     * Search for manga on MangaDex.
+     * Tries the title query first; if no results, retries with the original
+     * query as an alt-title to catch Japanese/romaji names like
+     * "Sono Bisque Doll wa Koi o Suru".
      */
     static async search(query) {
         try {
-            const params = new URLSearchParams();
-            params.set('title', query);
-            params.set('limit', '15');
-            params.append('includes[]', 'cover_art');
-            params.append('contentRating[]', 'safe');
-            params.append('contentRating[]', 'suggestive');
-            params.append('contentRating[]', 'erotica');
+            const baseParams = () => {
+                const p = new URLSearchParams();
+                p.set('limit', '15');
+                p.append('includes[]', 'cover_art');
+                p.append('contentRating[]', 'safe');
+                p.append('contentRating[]', 'suggestive');
+                p.append('contentRating[]', 'erotica');
+                return p;
+            };
 
+            // Primary search by title
+            const params = baseParams();
+            params.set('title', query);
             const url = `${MANGADEX_API}/manga?${params.toString()}`;
             const data = await http.getJSON(url);
-            const results = this.parseSearchResults(data);
+            let results = this.parseSearchResults(data);
+
+            // If no results, retry with the query in the generic order parameter
+            // which searches across title + altTitles. This helps find manga by
+            // Japanese or romanised titles (e.g. "Sono Bisque Doll wa Koi o Suru").
+            if (results.length === 0) {
+                const altParams = baseParams();
+                altParams.set('title', query);
+                altParams.set('order[relevance]', 'desc');
+                const altUrl = `${MANGADEX_API}/manga?${altParams.toString()}`;
+                const altData = await http.getJSON(altUrl);
+                results = this.parseSearchResults(altData);
+            }
+
             return await this._attachStatistics(results);
         } catch (error) {
             console.error('MangaDex search error:', error);
@@ -56,18 +77,44 @@ export class MangaDexScraper {
     }
 
     /**
-     * Get chapter list for a manga
+     * Get chapter list for a manga.
+     * Paginates through all results (MangaDex caps each response at 500).
+     * Deduplicates by chapter number (keeps first occurrence per number).
      */
     static async getChapters(mangaId) {
         try {
-            const params = new URLSearchParams();
-            params.set('limit', '100');
-            params.set('order[chapter]', 'asc');
-            params.append('translatedLanguage[]', 'en');
+            const allChapters = [];
+            const PAGE_LIMIT = 100;
+            let offset = 0;
+            let total = Infinity;
 
-            const url = `${MANGADEX_API}/manga/${mangaId}/feed?${params.toString()}`;
-            const data = await http.getJSON(url);
-            return this.parseChapterList(data);
+            while (offset < total) {
+                const params = new URLSearchParams();
+                params.set('limit', String(PAGE_LIMIT));
+                params.set('offset', String(offset));
+                params.set('order[chapter]', 'asc');
+                params.append('translatedLanguage[]', 'en');
+
+                const url = `${MANGADEX_API}/manga/${mangaId}/feed?${params.toString()}`;
+                const data = await http.getJSON(url);
+                total = data.total ?? 0;
+
+                const batch = this.parseChapterList(data);
+                allChapters.push(...batch);
+
+                offset += PAGE_LIMIT;
+                // Safety: stop after 2000 chapters or if batch was empty
+                if (batch.length === 0 || offset >= 2000) break;
+            }
+
+            // Deduplicate: keep first occurrence of each chapter number
+            const seen = new Set();
+            return allChapters.filter(ch => {
+                const key = ch.chapter;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
         } catch (error) {
             console.error('MangaDex chapter fetch error:', error);
             return [];

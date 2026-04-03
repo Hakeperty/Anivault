@@ -25,6 +25,7 @@ export class DiscoverScreen {
         this._cacheTime = 0;
         this._loading = false;
         this._recommendations = null;
+        this._userRecommends = null;
     }
 
     async render() {
@@ -53,6 +54,7 @@ export class DiscoverScreen {
         document.getElementById('discover-refresh')?.addEventListener('click', () => {
             this._cache = null;
             this._recommendations = null;
+            this._userRecommends = null;
             this._loadContent();
         });
         this._loadContent();
@@ -67,6 +69,7 @@ export class DiscoverScreen {
         // Always fetch fresh continue-watching from DB
         let continueWatching = [];
         let libraryItems = [];
+        let userRecs = [];
         try {
             libraryItems = await db.getLibrary();
             continueWatching = libraryItems
@@ -75,10 +78,18 @@ export class DiscoverScreen {
                 .slice(0, 12);
         } catch (e) { /* ignore */ }
 
+        // Fetch user recommendations
+        try {
+            userRecs = await db.getRecommendations();
+            userRecs.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+            this._userRecommends = userRecs;
+        } catch (e) { this._userRecommends = []; }
+
         // Use cache if less than 10 minutes old
         const CACHE_TTL = 10 * 60 * 1000;
         if (this._cache && (Date.now() - this._cacheTime < CACHE_TTL)) {
             container.innerHTML = this._buildContinueWatching(continueWatching)
+                + this._buildUserRecommends()
                 + this._buildRecommendations()
                 + this._buildSections(this._cache);
             this._bindCards(container);
@@ -109,6 +120,7 @@ export class DiscoverScreen {
 
             if (!document.getElementById('discover-content')) return;
             container.innerHTML = this._buildContinueWatching(continueWatching)
+                + this._buildUserRecommends()
                 + this._buildRecommendations()
                 + this._buildSections(data);
             this._bindCards(container);
@@ -166,6 +178,15 @@ export class DiscoverScreen {
             `<span class="section-icon recommend">${ICONS.recommend}</span>Recommended For You`,
             this._recommendations,
             'recommended'
+        );
+    }
+
+    _buildUserRecommends() {
+        if (!this._userRecommends || this._userRecommends.length === 0) return '';
+        return this._section(
+            `<span class="section-icon user-recommend">${ICONS.star}</span>User Recommends`,
+            this._userRecommends,
+            'user-recommends'
         );
     }
 
@@ -280,6 +301,7 @@ export class DiscoverScreen {
                 let item = null;
                 const allLists = this._cache ? Object.values(this._cache) : [];
                 if (this._recommendations) allLists.push(this._recommendations);
+                if (this._userRecommends) allLists.push(this._userRecommends);
 
                 for (const list of allLists) {
                     item = list.find(r => r.id === id && r.source === source);

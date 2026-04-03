@@ -7,7 +7,7 @@ export class Database {
     constructor() {
         this.db = null;
         this.dbName = 'AniVaultDB';
-        this.version = 1;
+        this.version = 2;
     }
 
     async init() {
@@ -48,6 +48,13 @@ export class Database {
                 // Settings store
                 if (!db.objectStoreNames.contains('settings')) {
                     db.createObjectStore('settings', { keyPath: 'key' });
+                }
+
+                // User Recommends store (items users mark as recommended for others)
+                if (!db.objectStoreNames.contains('userRecommends')) {
+                    const recStore = db.createObjectStore('userRecommends', { keyPath: 'id' });
+                    recStore.createIndex('addedAt', 'addedAt', { unique: false });
+                    recStore.createIndex('type', 'type', { unique: false });
                 }
             };
         });
@@ -256,14 +263,54 @@ export class Database {
     }
 
     async clearAllData() {
-        const tx = this.db.transaction(['library', 'progress', 'downloads', 'settings'], 'readwrite');
-        tx.objectStore('library').clear();
-        tx.objectStore('progress').clear();
-        tx.objectStore('downloads').clear();
-        tx.objectStore('settings').clear();
+        const storeNames = ['library', 'progress', 'downloads', 'settings', 'userRecommends'];
+        const tx = this.db.transaction(storeNames, 'readwrite');
+        storeNames.forEach(name => tx.objectStore(name).clear());
         return new Promise((resolve, reject) => {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    // User Recommendations Operations
+    async addRecommendation(item) {
+        const tx = this.db.transaction(['userRecommends'], 'readwrite');
+        const store = tx.objectStore('userRecommends');
+        const rec = { ...item, addedAt: Date.now() };
+        store.put(rec);
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve(rec);
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async removeRecommendation(id) {
+        const tx = this.db.transaction(['userRecommends'], 'readwrite');
+        const store = tx.objectStore('userRecommends');
+        store.delete(id);
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
+    async getRecommendations() {
+        const tx = this.db.transaction(['userRecommends'], 'readonly');
+        const store = tx.objectStore('userRecommends');
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async isRecommended(id) {
+        const tx = this.db.transaction(['userRecommends'], 'readonly');
+        const store = tx.objectStore('userRecommends');
+        return new Promise((resolve, reject) => {
+            const request = store.get(id);
+            request.onsuccess = () => resolve(!!request.result);
+            request.onerror = () => reject(request.error);
         });
     }
 

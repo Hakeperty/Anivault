@@ -75,6 +75,19 @@ export class ReaderScreen {
     async afterRender() {
         this.setupBackButton();
         this.setupModeToggle();
+
+        // Load saved reader mode preference from settings
+        try {
+            const savedMode = await db.getSetting('readerMode', 'page');
+            if (savedMode === 'scroll' || savedMode === 'page') {
+                this.mode = savedMode;
+                const btn = document.getElementById('reader-mode-toggle');
+                if (btn) btn.textContent = this.mode === 'page' ? 'Page' : 'Scroll';
+            }
+        } catch (e) {
+            console.warn('Could not load reader mode setting:', e);
+        }
+
         await this.loadPages();
     }
 
@@ -87,11 +100,14 @@ export class ReaderScreen {
     }
 
     setupModeToggle() {
-        document.getElementById('reader-mode-toggle')?.addEventListener('click', () => {
+        document.getElementById('reader-mode-toggle')?.addEventListener('click', async () => {
             this.mode = this.mode === 'page' ? 'scroll' : 'page';
             const btn = document.getElementById('reader-mode-toggle');
             btn.textContent = this.mode === 'page' ? 'Page' : 'Scroll';
             this.applyMode();
+
+            // Persist the mode choice to settings
+            try { await db.setSetting('readerMode', this.mode); } catch (e) {}
         });
     }
 
