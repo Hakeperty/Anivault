@@ -160,9 +160,9 @@ export class SearchCoordinator {
         }
     }
 
-    static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch') {
+    static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch', audioType = null) {
         try {
-            return await AniWatchScraper.getStreamUrl(episodeOrId);
+            return await AniWatchScraper.getStreamUrl(episodeOrId, audioType);
         } catch (error) {
             console.error('Failed to get stream URL:', error);
             return null;

@@ -1,13 +1,13 @@
 /**
  * DownloadManager — processes queued downloads in IndexedDB.
  *
- * Manga chapters: fetches every page image, converts to data-URL, stores in
- * a "downloadedPages" field on the download record so the reader can show
- * them offline.
+ * Manga chapters: fetches every page image via patched fetch, converts to
+ * data-URL, stores in a "downloadedPages" field.
  *
- * Anime episodes: uses native CDNDownloader plugin (hidden WebView on
- * megacloud.blog origin) to fetch HLS segments through Chrome's real engine,
- * bypassing both TLS fingerprint blocking and CORS origin restrictions.
+ * Anime episodes: uses native CDNDownloader plugin which loads the embed
+ * page in a hidden WebView. The embed page decrypts sources and starts
+ * HLS.js — we intercept the m3u8 URL, then download segments through
+ * the same WebView (correct CORS origin + Chrome TLS fingerprint).
  */
 
 import { db } from '../db/indexeddb.js';
@@ -22,13 +22,13 @@ class _DownloadManager {
         this._currentId = null;
         this._aborted = false;
         this._cdnPlugin = null;
-        this._cdnReady = false;
     }
 
     start() {
         if (this._running) return;
         this._running = true;
         this._tick();
+        this._emitActiveCount();
         console.log('[DL] DownloadManager started');
     }
 
@@ -39,21 +39,16 @@ class _DownloadManager {
     }
 
     async cancel(downloadId) {
-        if (this._currentId === downloadId) {
-            this._aborted = true;
-        }
-        try {
-            await db.updateDownload(downloadId, { status: 'failed', error: 'Cancelled' });
-        } catch (_) {}
+        if (this._currentId === downloadId) this._aborted = true;
+        try { await db.updateDownload(downloadId, { status: 'failed', error: 'Cancelled' }); } catch (_) {}
+        this._emitActiveCount();
     }
 
     async retry(downloadId) {
-        try {
-            await db.updateDownload(downloadId, { status: 'queued', progress: 0, error: null });
-        } catch (_) {}
+        try { await db.updateDownload(downloadId, { status: 'queued', progress: 0, error: null }); } catch (_) {}
+        this._emitActiveCount();
     }
 
-    /** Check if a download exists for a given library item + episode token */
     async getDownloadForEpisode(libraryId, episodeToken) {
         const all = await db.getDownloads();
         return all.find(d =>
@@ -93,6 +88,7 @@ class _DownloadManager {
         this._currentId = item.id;
         this._aborted = false;
         await db.updateDownload(item.id, { status: 'downloading', progress: 0 });
+        this._emitActiveCount();
 
         try {
             const type = item.itemType || 'anime';
@@ -101,7 +97,6 @@ class _DownloadManager {
             } else {
                 await this._downloadAnime(item);
             }
-
             if (this._aborted) throw new Error('Cancelled');
             await db.updateDownload(item.id, { status: 'completed', progress: 100 });
             console.log(`[DL] completed ${item.id}`);
@@ -113,7 +108,17 @@ class _DownloadManager {
             }).catch(() => {});
         } finally {
             this._currentId = null;
+            this._emitActiveCount();
         }
+    }
+
+    /** Emit active download count so the UI can show a badge. */
+    async _emitActiveCount() {
+        try {
+            const all = await db.getDownloads();
+            const active = all.filter(d => d.status === 'downloading' || d.status === 'queued').length;
+            document.dispatchEvent(new CustomEvent('downloadCountChanged', { detail: { active } }));
+        } catch (_) {}
     }
 
     // ── Manga: fetch all pages as data-URLs ──
@@ -128,7 +133,6 @@ class _DownloadManager {
         const downloadedPages = [];
         for (let i = 0; i < pages.length; i++) {
             if (this._aborted) throw new Error('Cancelled');
-
             try {
                 const dataUrl = await this._fetchAsDataUrl(pages[i]);
                 downloadedPages.push(dataUrl);
@@ -136,7 +140,6 @@ class _DownloadManager {
                 console.warn(`[DL] page ${i + 1} failed:`, e.message);
                 downloadedPages.push(null);
             }
-
             const progress = Math.round(((i + 1) / pages.length) * 100);
             await db.updateDownload(item.id, { progress });
         }
@@ -153,219 +156,172 @@ class _DownloadManager {
     async _downloadAnime(item) {
         const episodeId = item.sourceId || item.localPath || item.episodeOrChapterId;
         const source = item.source || 'aniwatch';
+        const plugin = this._getCDNPlugin();
 
         await db.updateDownload(item.id, { progress: 2 });
 
-        // 1. Resolve stream URL
-        const streamData = await SearchCoordinator.getAnimeStreamUrl(episodeId, source);
-        if (!streamData || !streamData.url) throw new Error('Could not resolve stream URL');
+        try {
+            // 1. Resolve stream URL
+            const streamData = await SearchCoordinator.getAnimeStreamUrl(episodeId, source);
+            if (!streamData || !streamData.url) throw new Error('Could not resolve stream URL');
 
-        let m3u8Url = null;
+            let m3u8Url = null;
 
-        if (streamData.type === 'iframe' || streamData.type === 'embed') {
-            // Scraper couldn't extract direct m3u8 (sources encrypted).
-            // Use CDN plugin to load the embed page and intercept the m3u8 URL.
-            console.log('[DL] Sources encrypted — resolving via embed page...');
-            await db.updateDownload(item.id, { progress: 3 });
-            m3u8Url = await this._resolveStreamFromEmbed(streamData.url);
-            if (!m3u8Url) throw new Error('Could not extract stream from embed page');
-            console.log('[DL] Resolved m3u8:', m3u8Url.substring(0, 60));
-        } else if (streamData.url.includes('.m3u8') || streamData.type === 'hls') {
-            m3u8Url = streamData.url;
-        } else {
-            throw new Error('Unsupported stream type: ' + streamData.type);
-        }
+            if (streamData.type === 'iframe' || streamData.type === 'embed') {
+                // Encrypted sources — resolve via embed page (also sets up download WebView)
+                if (!plugin) throw new Error('CDN download plugin not available on this device');
+                console.log('[DL] Sources encrypted — resolving via embed page...');
+                await db.updateDownload(item.id, { progress: 3 });
+                const result = await plugin.resolveStream({ embedUrl: streamData.url });
+                m3u8Url = result?.url;
+                if (!m3u8Url) throw new Error('Could not extract stream from embed page');
+                console.log('[DL] Resolved m3u8:', m3u8Url.substring(0, 60));
+                // Plugin WebView is now kept alive for fetchText/fetchSegment
+            } else if (streamData.url.includes('.m3u8') || streamData.type === 'hls') {
+                m3u8Url = streamData.url;
+                // Need a WebView for segment downloads
+                if (plugin) {
+                    try { await plugin.init({ originUrl: 'https://megacloud.blog/' }); } catch (_) {}
+                }
+            } else {
+                throw new Error('Unsupported stream type: ' + streamData.type);
+            }
 
-        await db.updateDownload(item.id, { progress: 5 });
+            await db.updateDownload(item.id, { progress: 5 });
 
-        // 2. Fetch master m3u8
-        const m3u8Text = await this._fetchText(m3u8Url);
-        if (this._aborted) throw new Error('Cancelled');
+            // 2. Fetch master m3u8
+            const m3u8Text = await this._fetchText(m3u8Url);
+            if (this._aborted) throw new Error('Cancelled');
 
-        // 3. Parse — if master playlist, pick a quality; if media playlist, use directly
-        let mediaUrl = m3u8Url;
-        let mediaText = m3u8Text;
+            // 3. Parse — if master playlist, pick a quality; if media playlist, use directly
+            let mediaUrl = m3u8Url;
+            let mediaText = m3u8Text;
 
-        if (m3u8Text.includes('#EXT-X-STREAM-INF')) {
-            const lines = m3u8Text.split('\n');
-            let bestLine = null;
-            let bestBw = Infinity;
-            for (let i = 0; i < lines.length; i++) {
-                const match = lines[i].match(/#EXT-X-STREAM-INF.*BANDWIDTH=(\d+)/);
-                if (match) {
-                    const bw = parseInt(match[1], 10);
-                    const nextLine = lines[i + 1]?.trim();
-                    if (nextLine && !nextLine.startsWith('#')) {
-                        if (bw < bestBw) {
-                            bestBw = bw;
-                            bestLine = nextLine;
+            if (m3u8Text.includes('#EXT-X-STREAM-INF')) {
+                const lines = m3u8Text.split('\n');
+                let bestLine = null;
+                let bestBw = Infinity;
+                for (let i = 0; i < lines.length; i++) {
+                    const match = lines[i].match(/#EXT-X-STREAM-INF.*BANDWIDTH=(\d+)/);
+                    if (match) {
+                        const bw = parseInt(match[1], 10);
+                        const nextLine = lines[i + 1]?.trim();
+                        if (nextLine && !nextLine.startsWith('#')) {
+                            if (bw < bestBw) { bestBw = bw; bestLine = nextLine; }
                         }
                     }
                 }
+                if (bestLine) {
+                    mediaUrl = new URL(bestLine, m3u8Url).href;
+                    mediaText = await this._fetchText(mediaUrl);
+                }
             }
-            if (bestLine) {
-                mediaUrl = new URL(bestLine, m3u8Url).href;
-                mediaText = await this._fetchText(mediaUrl);
-            }
-        }
 
-        if (this._aborted) throw new Error('Cancelled');
-        await db.updateDownload(item.id, { progress: 10 });
-
-        // 4. Parse media playlist for .ts segment URLs
-        const segments = [];
-        const lines = mediaText.split('\n');
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed && !trimmed.startsWith('#')) {
-                segments.push(new URL(trimmed, mediaUrl).href);
-            }
-        }
-
-        if (segments.length === 0) throw new Error('No video segments found in playlist');
-        console.log(`[DL] Found ${segments.length} segments to download`);
-
-        // 5. Download segments via CDN plugin (hidden WebView on megacloud.blog)
-        const chunks = [];
-        let totalBytes = 0;
-        let failedCount = 0;
-        for (let i = 0; i < segments.length; i++) {
             if (this._aborted) throw new Error('Cancelled');
+            await db.updateDownload(item.id, { progress: 10 });
 
-            try {
-                const buf = await this._fetchSegment(segments[i]);
-                chunks.push(buf);
-                totalBytes += buf.byteLength;
-                failedCount = 0;
-            } catch (e) {
-                failedCount++;
-                console.warn(`[DL] segment ${i + 1}/${segments.length} failed:`, e.message);
-                if (failedCount > 3 && chunks.length === 0) {
-                    throw new Error(`CDN blocked downloads (${e.message}). Try again later.`);
+            // 4. Parse media playlist for segment URLs
+            const segments = [];
+            for (const line of mediaText.split('\n')) {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#')) {
+                    segments.push(new URL(trimmed, mediaUrl).href);
                 }
             }
+            if (segments.length === 0) throw new Error('No video segments found');
+            console.log(`[DL] Found ${segments.length} segments`);
 
-            // Small delay between segments
-            if (i < segments.length - 1) {
-                await new Promise(r => setTimeout(r, 50));
+            // 5. Download segments
+            const chunks = [];
+            let totalBytes = 0;
+            let failedCount = 0;
+            for (let i = 0; i < segments.length; i++) {
+                if (this._aborted) throw new Error('Cancelled');
+                try {
+                    const buf = await this._fetchSegment(segments[i]);
+                    chunks.push(buf);
+                    totalBytes += buf.byteLength;
+                    failedCount = 0;
+                } catch (e) {
+                    failedCount++;
+                    console.warn(`[DL] seg ${i + 1}/${segments.length} failed:`, e.message);
+                    if (failedCount > 3 && chunks.length === 0) {
+                        throw new Error(`CDN blocked (${e.message}). Try later.`);
+                    }
+                }
+                if (i < segments.length - 1) await new Promise(r => setTimeout(r, 50));
+                const progress = 10 + Math.round(((i + 1) / segments.length) * 80);
+                await db.updateDownload(item.id, { progress });
             }
 
-            // Progress: 10–90% for segment downloads
-            const progress = 10 + Math.round(((i + 1) / segments.length) * 80);
-            await db.updateDownload(item.id, { progress });
-        }
+            if (chunks.length === 0) throw new Error('No segments downloaded');
 
-        if (chunks.length === 0) throw new Error('Failed to download any video segments');
+            // 6. Concatenate into single blob
+            const blob = new Blob(chunks, { type: 'video/mp2t' });
+            console.log(`[DL] Video: ${(totalBytes / 1024 / 1024).toFixed(1)} MB`);
+            await db.updateDownload(item.id, { progress: 92 });
 
-        // 6. Concatenate into single blob
-        const blob = new Blob(chunks, { type: 'video/mp2t' });
-        console.log(`[DL] Total video size: ${(totalBytes / 1024 / 1024).toFixed(1)} MB`);
+            // 7. Convert to data URL for IndexedDB storage
+            const videoDataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(reader.error);
+                reader.readAsDataURL(blob);
+            });
 
-        await db.updateDownload(item.id, { progress: 92 });
-
-        // 7. Convert to data URL for IndexedDB storage
-        const videoDataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-        });
-
-        await db.updateDownload(item.id, {
-            progress: 98,
-            videoDataUrl,
-            fileSize: totalBytes,
-            streamType: 'offline'
-        });
-    }
-
-    // ── Shared helpers ──
-
-    /**
-     * Resolve m3u8 URL from an embed page using the native CDN plugin.
-     * The plugin loads the embed in a temporary WebView. The embed page's own
-     * JavaScript handles source decryption and starts HLS.js, which makes
-     * a request for the .m3u8 playlist. shouldInterceptRequest captures it.
-     */
-    async _resolveStreamFromEmbed(embedUrl) {
-        if (!await this._ensureCDNPlugin()) return null;
-        try {
-            const result = await this._cdnPlugin.resolveStream({ embedUrl });
-            return result?.url || null;
-        } catch (e) {
-            console.warn('[DL] resolveStream failed:', e.message || e);
-            return null;
+            await db.updateDownload(item.id, {
+                progress: 98,
+                videoDataUrl,
+                fileSize: totalBytes,
+                streamType: 'offline'
+            });
+        } finally {
+            // Always clean up the CDN plugin WebView
+            if (plugin) {
+                try { await plugin.destroy(); } catch (_) {}
+            }
         }
     }
 
-    /**
-     * Initialize the native CDNDownloader plugin (hidden WebView on megacloud.blog).
-     * Must be called before downloading anime segments.
-     */
-    async _ensureCDNPlugin() {
-        if (this._cdnReady) return true;
-        try {
+    // ── Helpers ──
+
+    _getCDNPlugin() {
+        if (!this._cdnPlugin) {
             this._cdnPlugin = window.Capacitor?.Plugins?.CDNDownloader || null;
-            if (!this._cdnPlugin) {
-                console.warn('[DL] CDNDownloader plugin not available');
-                return false;
-            }
-            console.log('[DL] Initializing CDN downloader (hidden WebView)...');
-            await this._cdnPlugin.init({ originUrl: 'https://megacloud.blog/' });
-            this._cdnReady = true;
-            console.log('[DL] CDN downloader ready');
-            return true;
-        } catch (e) {
-            console.warn('[DL] CDN plugin init failed:', e.message || e);
-            return false;
         }
+        return this._cdnPlugin;
     }
 
-    /** Fetch text (m3u8 playlists) via CDN plugin or fallback to patched fetch */
+    /** Fetch text via CDN plugin WebView, fallback to patched fetch */
     async _fetchText(url) {
-        // Strategy 1: Native CDN plugin (hidden WebView with megacloud.blog origin)
-        if (await this._ensureCDNPlugin()) {
+        const plugin = this._getCDNPlugin();
+        if (plugin) {
             try {
-                const result = await this._cdnPlugin.fetchText({ url });
-                if (result && result.text) {
-                    console.log('[DL] CDN plugin fetched text OK:', url.substring(0, 60));
-                    return result.text;
-                }
+                const result = await plugin.fetchText({ url });
+                if (result?.text) return result.text;
             } catch (e) {
-                console.warn('[DL] CDN plugin fetchText failed:', e.message || e);
+                console.warn('[DL] CDN fetchText failed:', e.message || e);
             }
         }
-
-        // Strategy 2: Patched fetch (CapacitorHttp native — works for non-CDN URLs)
-        console.log('[DL] Fallback to patched fetch for:', url.substring(0, 60));
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
         return resp.text();
     }
 
-    /** Fetch a binary segment via CDN plugin (with retry) */
+    /** Fetch binary segment via CDN plugin WebView with retry */
     async _fetchSegment(url, retries = 2) {
+        const plugin = this._getCDNPlugin();
         for (let attempt = 0; attempt <= retries; attempt++) {
-            // Strategy 1: Native CDN plugin
-            if (this._cdnReady && this._cdnPlugin) {
+            if (plugin) {
                 try {
-                    const result = await this._cdnPlugin.fetchSegment({ url });
-                    if (result && result.data) {
-                        return this._dataUrlToArrayBuffer(result.data);
-                    }
+                    const result = await plugin.fetchSegment({ url });
+                    if (result?.data) return this._dataUrlToArrayBuffer(result.data);
                 } catch (e) {
-                    const msg = e.message || e || '';
-                    if (msg.includes('403') && attempt < retries) {
-                        await new Promise(r => setTimeout(r, 500 + attempt * 500));
-                        continue;
-                    }
-                    if (attempt >= retries) throw new Error(msg);
-                    await new Promise(r => setTimeout(r, 500));
+                    if (attempt >= retries) throw new Error(e.message || e);
+                    await new Promise(r => setTimeout(r, 500 + attempt * 500));
                     continue;
                 }
             }
-
-            // Strategy 2: Patched fetch fallback
             try {
                 const resp = await fetch(url);
                 if (resp.ok) return resp.arrayBuffer();
@@ -378,7 +334,6 @@ class _DownloadManager {
         throw new Error('All download strategies failed');
     }
 
-    /** Convert a data:...;base64,... URL to ArrayBuffer */
     _dataUrlToArrayBuffer(dataUrl) {
         const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
         const binary = atob(base64);
@@ -387,18 +342,8 @@ class _DownloadManager {
         return bytes.buffer;
     }
 
+    /** Manga page download — uses patched fetch directly (no CDN needed) */
     async _fetchAsDataUrl(url) {
-        // For manga pages — try CDN plugin first, then patched fetch
-        if (await this._ensureCDNPlugin()) {
-            try {
-                const result = await this._cdnPlugin.fetchSegment({ url });
-                if (result && result.data) return result.data; // Already a data URL
-            } catch (e) {
-                console.warn('[DL] CDN plugin image fetch failed:', e.message);
-            }
-        }
-
-        // Fallback: patched fetch
         const response = await fetch(url, {
             headers: { 'Referer': new URL(url).origin + '/' }
         });

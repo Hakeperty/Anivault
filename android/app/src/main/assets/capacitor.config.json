@@ -7,6 +7,9 @@
 		"androidScheme": "https"
 	},
 	"plugins": {
+		"CapacitorHttp": {
+			"enabled": true
+		},
 		"Filesystem": {
 			"checkPermissions": true,
 			"requestPermissions": true

@@ -120,8 +120,8 @@ export class DownloadsScreen {
                     </span>
                     ${errorText}
                     ${type === 'progress' ? `
-                        <div style="margin-top:6px;height:3px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">
-                            <div style="height:100%;width:${progress}%;background:var(--accent-primary);border-radius:2px;transition:width .3s;"></div>
+                        <div class="dl-progress-bar">
+                            <div class="dl-progress-fill" style="width:${progress}%;"></div>
                         </div>
                     ` : ''}
                 </div>
@@ -137,15 +137,22 @@ export class DownloadsScreen {
 
     async afterRender() {
         this._active = true;
-        // Auto-refresh while there are active downloads
+        this._setupRefreshTimer();
+        this._bindEvents();
+    }
+
+    _setupRefreshTimer() {
         if (this._refreshTimer) clearInterval(this._refreshTimer);
+        this._refreshTimer = null;
         const hasActive = this.downloads.some(d => d.status === 'downloading' || d.status === 'queued');
         if (hasActive) {
             this._refreshTimer = setInterval(() => {
                 if (this._active) this.refresh();
             }, 2000);
         }
+    }
 
+    _bindEvents() {
         document.querySelectorAll('.dl-delete-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -160,7 +167,7 @@ export class DownloadsScreen {
                 e.stopPropagation();
                 await DownloadManager.retry(btn.dataset.dlId);
                 showToast('Download requeued', 'info');
-                await this.refresh();
+                if (this._active) await this.refresh();
             });
         });
 
@@ -194,12 +201,40 @@ export class DownloadsScreen {
 
     async refresh() {
         if (!this._active) return;
+
+        // Guard: verify downloads screen is still showing in the DOM
         const container = document.getElementById('screen-container');
-        if (container) {
-            const html = await this.render();
-            container.innerHTML = html;
-            await this.afterRender();
+        if (!container || !container.querySelector('.downloads-screen')) {
+            this.deactivate();
+            return;
         }
+
+        // Fetch latest data (async gap — user may navigate away)
+        try {
+            this.downloads = await db.getDownloads();
+        } catch (err) {
+            this.downloads = [];
+        }
+
+        // Re-check after async gap
+        if (!this._active) return;
+        if (!container.querySelector('.downloads-screen')) {
+            this.deactivate();
+            return;
+        }
+
+        const html = await this.render();
+
+        // Re-check again after second async gap
+        if (!this._active) return;
+        if (!container.querySelector('.downloads-screen')) {
+            this.deactivate();
+            return;
+        }
+
+        container.innerHTML = html;
+        this._bindEvents();
+        this._setupRefreshTimer();
     }
 
     formatSize(bytes) {

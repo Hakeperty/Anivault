@@ -83,6 +83,16 @@ class AniVaultApp {
 
         // Handle back navigation
         document.addEventListener('goBack', () => this.goBack());
+
+        // Download count badge
+        document.addEventListener('downloadCountChanged', (e) => {
+            const badge = document.getElementById('dl-badge');
+            if (badge) {
+                const count = e.detail?.active || 0;
+                badge.textContent = count > 0 ? String(count) : '';
+                badge.classList.toggle('visible', count > 0);
+            }
+        });
     }
 
     async loadScreen(screenName) {

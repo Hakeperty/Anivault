@@ -5,6 +5,7 @@
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
 import { SearchCoordinator } from '../scrapers/coordinator.js';
+import { DownloadManager } from '../utils/downloader.js';
 
 const HLS_CDN = 'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js';
 
@@ -20,6 +21,7 @@ export class PlayerScreen {
         this.playbackRate = 1;
         this._skipIntroDismissed = false;
         this._autoPlayTimer = null;
+        this._audioType = localStorage.getItem('anivault-audio-pref') || 'sub';
     }
 
     async render() {
@@ -44,11 +46,12 @@ export class PlayerScreen {
                 <!-- Iframe player (for embed streams) -->
                 <iframe id="player-iframe" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#000;z-index:1;" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
 
-                <!-- Iframe overlay controls -->
-                <div id="iframe-controls" style="display:none;position:absolute;top:0;left:0;width:100%;z-index:2;padding:12px;background:linear-gradient(to bottom,rgba(0,0,0,0.7),transparent);">
-                    <button class="btn btn-secondary btn-small" id="iframe-back-btn" style="font-size:14px;">← Back</button>
-                    <span style="color:#fff;margin-left:12px;font-size:14px;">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
-                </div>
+                <!-- Iframe floating back button (always visible in iframe mode) -->
+                <button id="iframe-back-btn" class="iframe-float-back" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="22" height="22"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <!-- Iframe sub/dub toggle (always visible in iframe mode) -->
+                <button id="iframe-audio-toggle" class="iframe-float-audio" style="display:none;">${this._audioType === 'dub' ? 'DUB' : 'SUB'}</button>
 
                 <!-- Video element -->
                 <video id="player-video" playsinline></video>
@@ -68,7 +71,8 @@ export class PlayerScreen {
                     <div class="player-controls-top">
                         <button class="btn btn-secondary btn-small" id="player-back-btn">← Back</button>
                         <span class="player-title">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
-                        <button class="player-ctrl-btn" id="player-speed-btn" title="Playback Speed" style="margin-left:auto;font-size:13px;min-width:44px;">1x</button>
+                        <button class="player-ctrl-btn" id="player-audio-toggle" title="Sub/Dub" style="margin-left:auto;font-size:12px;min-width:44px;background:rgba(255,255,255,.15);border-radius:4px;">${this._audioType === 'dub' ? 'DUB' : 'SUB'}</button>
+                        <button class="player-ctrl-btn" id="player-speed-btn" title="Playback Speed" style="font-size:13px;min-width:44px;">1x</button>
                     </div>
                     <div class="player-controls-center" id="player-center">
                         <button class="player-ctrl-btn" id="player-rw">
@@ -97,6 +101,7 @@ export class PlayerScreen {
     async afterRender() {
         this._injectStyles();
         this._setupBackButtons();
+        this._setupAudioToggle();
         await this._initPlayer();
     }
 
@@ -129,6 +134,10 @@ export class PlayerScreen {
         if (iframe) iframe.src = 'about:blank';
     }
 
+    deactivate() {
+        this._cleanup();
+    }
+
     /* ── Player init ── */
 
     async _initPlayer() {
@@ -141,114 +150,167 @@ export class PlayerScreen {
         loadingEl.style.display = '';
         errorEl.style.display = 'none';
 
-        // Safety timeout — if nothing loads in 25s, show error with retry
+        // Safety timeout — 40s total for all strategies
         const loadTimeout = setTimeout(() => {
             if (loadingEl.style.display !== 'none') {
                 this._showError('Stream is taking too long. Tap Retry.');
             }
-        }, 25000);
+        }, 40000);
 
         try {
-            // Update loading text
             const loadingText = loadingEl.querySelector('p');
+            if (loadingText) loadingText.textContent = 'Finding stream…';
+
+            // Check for offline download first
+            const offlineData = await this._checkOfflineDownload();
+            if (offlineData) {
+                clearTimeout(loadTimeout);
+                if (loadingText) loadingText.textContent = 'Loading offline video…';
+                video.src = offlineData;
+                video.addEventListener('loadedmetadata', () => {
+                    loadingEl.style.display = 'none';
+                    this._restoreProgress(video);
+                    video.play().catch(() => {});
+                }, { once: true });
+                video.addEventListener('error', () => {
+                    loadingEl.style.display = 'none';
+                    showToast('Offline video corrupted. Streaming instead…', 'error');
+                    this._initPlayerOnline(video, iframe, loadingEl, loadingText);
+                }, { once: true });
+                this._setupControls(video);
+                this._startProgressSaving(video);
+                return;
+            }
+
+            await this._initPlayerOnline(video, iframe, loadingEl, loadingText);
+        } catch (err) {
+            clearTimeout(loadTimeout);
+            console.error('Player init failed:', err);
+            this._showError(err.message || 'Failed to load stream.');
+        }
+    }
+
+    /** Check if this episode has been downloaded for offline playback */
+    async _checkOfflineDownload() {
+        try {
+            const epNum = this.episode.number ?? this.episode.episode ?? '';
+            const token = `ep-${epNum}`;
+            const libraryId = this.libraryItem?.id;
+            if (!libraryId || !epNum) return null;
+
+            const dl = await DownloadManager.getDownloadForEpisode(libraryId, token);
+            if (dl && dl.videoDataUrl) {
+                console.log('[Player] Found offline download, using cached video');
+                return dl.videoDataUrl;
+            }
+        } catch (e) {
+            console.warn('[Player] Offline check failed:', e.message);
+        }
+        return null;
+    }
+
+    /** Online streaming init (extracted from _initPlayer) */
+    async _initPlayerOnline(video, iframe, loadingEl, loadingText) {
+        // Re-apply safety timeout for online streaming
+        const loadTimeout = setTimeout(() => {
+            if (loadingEl.style.display !== 'none') {
+                this._showError('Stream is taking too long. Tap Retry.');
+            }
+        }, 40000);
+
+        try {
             if (loadingText) loadingText.textContent = 'Finding stream…';
 
             const streamData = await SearchCoordinator.getAnimeStreamUrl(
                 this.episode.episodeId || this.episode.id || this.episode.url,
-                this.episode.source || this.libraryItem?.source || 'aniwatch'
+                this.episode.source || this.libraryItem?.source || 'aniwatch',
+                this._audioType
             );
             if (!streamData || !streamData.url) throw new Error('No stream URL found');
 
             // Iframe embed mode — show embed in full-screen iframe
             if (streamData.type === 'iframe' && iframe) {
                 clearTimeout(loadTimeout);
-                video.style.display = 'none';
-                document.getElementById('player-controls')?.style.setProperty('display', 'none');
-                document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
-
-                iframe.style.display = 'block';
-                document.getElementById('iframe-controls').style.display = 'flex';
-                iframe.src = streamData.url;
-
-                let overlayTimer = setTimeout(() => {
-                    document.getElementById('iframe-controls').style.display = 'none';
-                }, 5000);
-                iframe.parentElement.addEventListener('click', (e) => {
-                    if (e.target === iframe) return;
-                    const ctrl = document.getElementById('iframe-controls');
-                    if (ctrl) {
-                        const visible = ctrl.style.display !== 'none';
-                        ctrl.style.display = visible ? 'none' : 'flex';
-                        clearTimeout(overlayTimer);
-                        if (!visible) overlayTimer = setTimeout(() => { ctrl.style.display = 'none'; }, 5000);
-                    }
-                });
-
-                setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
+                this._showIframeEmbed(video, iframe, streamData.url, loadingEl);
                 return;
             }
 
             const streamUrl = streamData.url;
             if (loadingText) loadingText.textContent = 'Loading video…';
 
-            // Strategy 1: Try native HLS (Android WebView often supports it)
-            const nativeWorks = await this._tryNativeHls(video, streamUrl, loadTimeout);
-            if (nativeWorks) {
-                loadingEl.style.display = 'none';
-                this._setupControls(video);
-                this._startProgressSaving(video);
-                return;
-            }
-
-            // Strategy 2: Use HLS.js library
+            // Strategy 1: HLS.js with custom fetch loader (CORS bypass via CapacitorHttp)
             await this._loadHls();
 
             if (window.Hls && window.Hls.isSupported()) {
-                this.hls = new window.Hls({
-                    maxBufferLength: 30,
-                    maxMaxBufferLength: 60,
-                    enableWorker: false,
-                    xhrSetup: (xhr) => {
-                        xhr.setRequestHeader('Referer', 'https://megacloud.blog/');
-                    }
-                });
-                this.hls.loadSource(streamUrl);
-                this.hls.attachMedia(video);
+                if (loadingText) loadingText.textContent = 'Starting playback…';
 
-                this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-                    clearTimeout(loadTimeout);
-                    loadingEl.style.display = 'none';
-                    this._restoreProgress(video);
-                    video.play().catch(() => {});
-                });
+                const hlsOk = await new Promise((resolve) => {
+                    this.hls = new window.Hls({
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 60,
+                        enableWorker: false,
+                        loader: this._createFetchLoader(),
+                    });
+                    this.hls.loadSource(streamUrl);
+                    this.hls.attachMedia(video);
 
-                this.hls.on(window.Hls.Events.ERROR, (_e, data) => {
-                    if (data.fatal) {
-                        console.error('HLS fatal error', data);
-                        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
-                            this.hls.startLoad();
-                        } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
-                            this.hls.recoverMediaError();
-                        } else {
-                            clearTimeout(loadTimeout);
-                            this._showError('Playback error. Try again.');
+                    const hlsTimer = setTimeout(() => resolve(false), 20000);
+                    let networkRetried = false;
+
+                    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+                        clearTimeout(hlsTimer);
+                        resolve(true);
+                    });
+
+                    this.hls.on(window.Hls.Events.ERROR, (_e, data) => {
+                        if (data.fatal) {
+                            console.error('HLS.js error:', data.type, data.details);
+                            if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
+                                networkRetried = true;
+                                this.hls.startLoad();
+                            } else {
+                                clearTimeout(hlsTimer);
+                                resolve(false);
+                            }
                         }
-                    }
+                    });
                 });
-            } else {
-                // Strategy 3: Direct src assignment (last resort)
-                video.src = streamUrl;
-                video.addEventListener('loadedmetadata', () => {
+
+                if (hlsOk) {
                     clearTimeout(loadTimeout);
                     loadingEl.style.display = 'none';
                     this._restoreProgress(video);
                     video.play().catch(() => {});
-                }, { once: true });
-                video.addEventListener('error', () => {
-                    clearTimeout(loadTimeout);
-                    this._showError('Cannot play this stream format.');
-                }, { once: true });
+                    this._setupControls(video);
+                    this._startProgressSaving(video);
+                    return;
+                }
+
+                // HLS.js failed — clean up
+                this.hls.destroy();
+                this.hls = null;
             }
+
+            // Strategy 2: Iframe embed fallback (guaranteed to work — MegaCloud has its own player)
+            if (streamData.embedUrl && iframe) {
+                clearTimeout(loadTimeout);
+                if (loadingText) loadingText.textContent = 'Trying embed player…';
+                this._showIframeEmbed(video, iframe, streamData.embedUrl, loadingEl);
+                return;
+            }
+
+            // Strategy 3: Direct src assignment (last resort)
+            video.src = streamUrl;
+            video.addEventListener('loadedmetadata', () => {
+                clearTimeout(loadTimeout);
+                loadingEl.style.display = 'none';
+                this._restoreProgress(video);
+                video.play().catch(() => {});
+            }, { once: true });
+            video.addEventListener('error', () => {
+                clearTimeout(loadTimeout);
+                this._showError('Cannot play this stream. Tap Retry.');
+            }, { once: true });
 
             this._setupControls(video);
             this._startProgressSaving(video);
@@ -260,49 +322,88 @@ export class PlayerScreen {
     }
 
     /**
-     * Try playing m3u8 natively via video.src (works on many Android WebViews)
-     * Returns true if playback starts within 8s, false otherwise.
+     * Custom HLS.js loader using fetch API (patched by CapacitorHttp for CORS bypass).
+     * The default XHR loader fails because Referer is a forbidden header in browsers.
+     * CapacitorHttp patches window.fetch() to go through native Android HTTP — no CORS.
      */
-    _tryNativeHls(video, url, parentTimeout) {
-        return new Promise((resolve) => {
-            // Check if the WebView can play HLS natively
-            if (!video.canPlayType('application/vnd.apple.mpegurl') &&
-                !video.canPlayType('application/x-mpegURL')) {
-                return resolve(false);
+    _createFetchLoader() {
+        return class {
+            constructor(config) {
+                this._controller = null;
             }
 
-            const cleanup = () => {
-                video.removeEventListener('loadedmetadata', onLoad);
-                video.removeEventListener('error', onError);
-                clearTimeout(timer);
-            };
+            load(context, config, callbacks) {
+                this._controller = new AbortController();
+                const { url, responseType } = context;
 
-            const onLoad = () => {
-                cleanup();
-                clearTimeout(parentTimeout);
-                this._restoreProgress(video);
-                video.play().catch(() => {});
-                resolve(true);
-            };
+                const timeout = setTimeout(() => {
+                    this._controller?.abort();
+                    callbacks.onTimeout(
+                        { trequest: performance.now(), retry: 0 },
+                        context, null
+                    );
+                }, config.timeout || 15000);
 
-            const onError = () => {
-                cleanup();
-                video.removeAttribute('src');
-                video.load();
-                resolve(false);
-            };
+                fetch(url, {
+                    signal: this._controller.signal,
+                    headers: {
+                        'Referer': 'https://megacloud.blog/',
+                        'Origin': 'https://megacloud.blog',
+                        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                    }
+                })
+                .then(async (resp) => {
+                    clearTimeout(timeout);
+                    if (!resp.ok) {
+                        callbacks.onError(
+                            { code: resp.status, text: `HTTP ${resp.status}` },
+                            context, null
+                        );
+                        return;
+                    }
+                    const data = responseType === 'arraybuffer'
+                        ? await resp.arrayBuffer()
+                        : await resp.text();
+                    const len = data.byteLength || data.length || 0;
+                    callbacks.onSuccess(
+                        { url: resp.url || url, data },
+                        { trequest: performance.now(), tfirst: performance.now(),
+                          tload: performance.now(), loaded: len, total: len, retry: 0 },
+                        context, null
+                    );
+                })
+                .catch((err) => {
+                    clearTimeout(timeout);
+                    if (err.name === 'AbortError') return;
+                    callbacks.onError(
+                        { code: 0, text: err.message || 'Fetch failed' },
+                        context, null
+                    );
+                });
+            }
 
-            const timer = setTimeout(() => {
-                cleanup();
-                video.removeAttribute('src');
-                video.load();
-                resolve(false);
-            }, 8000);
+            abort() { this._controller?.abort(); }
+            destroy() { this.abort(); }
+        };
+    }
 
-            video.addEventListener('loadedmetadata', onLoad, { once: true });
-            video.addEventListener('error', onError, { once: true });
-            video.src = url;
-        });
+    /**
+     * Show iframe embed player (used for direct iframe streams and as HLS fallback).
+     */
+    _showIframeEmbed(video, iframe, embedUrl, loadingEl) {
+        video.style.display = 'none';
+        document.getElementById('player-controls')?.style.setProperty('display', 'none');
+        document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
+
+        iframe.style.display = 'block';
+        // Show persistent floating back button (always visible — not auto-hidden)
+        const backBtn = document.getElementById('iframe-back-btn');
+        if (backBtn) backBtn.style.display = 'flex';
+        const audioBtn = document.getElementById('iframe-audio-toggle');
+        if (audioBtn) audioBtn.style.display = 'block';
+        iframe.src = embedUrl;
+
+        setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
     }
 
     _showError(msg) {
@@ -472,6 +573,33 @@ export class PlayerScreen {
         });
     }
 
+    /* ── Sub/Dub audio toggle ── */
+
+    _setupAudioToggle() {
+        const hlsBtn = document.getElementById('player-audio-toggle');
+        const iframeBtn = document.getElementById('iframe-audio-toggle');
+        const toggle = () => this._switchAudioType();
+        hlsBtn?.addEventListener('click', toggle);
+        iframeBtn?.addEventListener('click', toggle);
+    }
+
+    _switchAudioType() {
+        const newType = this._audioType === 'dub' ? 'sub' : 'dub';
+        this._audioType = newType;
+        localStorage.setItem('anivault-audio-pref', newType);
+        showToast(`Switching to ${newType.toUpperCase()}...`, 'info');
+
+        // Re-launch player with new audio type (fresh instance reads from localStorage)
+        this._cleanup();
+        document.dispatchEvent(new CustomEvent('navigateToPlayer', {
+            detail: {
+                libraryItem: this.libraryItem,
+                episode: this.episode,
+                allEpisodes: this.allEpisodes
+            }
+        }));
+    }
+
     /* ── Skip intro (visible 0:00–1:30) ── */
 
     _setupSkipIntro(video) {
@@ -621,6 +749,22 @@ export class PlayerScreen {
                 font-weight:600; cursor:pointer; backdrop-filter:blur(4px);
             }
             .player-skip-intro:active { transform:scale(.95); }
+            .iframe-float-back {
+                position:absolute; top:12px; left:12px; z-index:5;
+                width:40px; height:40px; border-radius:50%;
+                background:rgba(0,0,0,0.5); border:none; color:#fff;
+                cursor:pointer; align-items:center; justify-content:center;
+                backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+            }
+            .iframe-float-back:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
+            .iframe-float-audio {
+                position:absolute; top:12px; right:12px; z-index:5;
+                padding:6px 12px; border-radius:4px;
+                background:rgba(0,0,0,0.5); border:none; color:#fff;
+                font-size:12px; font-weight:700; cursor:pointer;
+                backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+            }
+            .iframe-float-audio:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
         `;
         document.head.appendChild(style);
     }

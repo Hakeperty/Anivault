@@ -94,10 +94,16 @@ export class DownloadsScreen {
     renderDownloadItem(download, type) {
         const size = download.fileSize ? this.formatSize(download.fileSize) : '';
         const progress = download.progress || 0;
+        const itemType = download.itemType || 'anime';
+        const typeBadge = itemType === 'manga'
+            ? '<span style="color:var(--accent-secondary,#4ECDC4);font-size:10px;font-weight:700;background:rgba(78,205,196,.15);padding:1px 5px;border-radius:3px;margin-right:4px;">MANGA</span>'
+            : '<span style="color:var(--accent-primary,#FF6B35);font-size:10px;font-weight:700;background:rgba(255,107,53,.15);padding:1px 5px;border-radius:3px;margin-right:4px;">ANIME</span>';
+        const errorText = download.error && type === 'failed'
+            ? `<span style="color:var(--text-tertiary);font-size:10px;display:block;margin-top:2px;">${download.error}</span>` : '';
 
         const statusMap = {
-            completed: '<span style="color:var(--success);font-size:11px;font-weight:600;">Completed</span>',
-            downloading: '<span style="color:var(--accent-primary);font-size:11px;font-weight:600;">Downloading</span>',
+            completed: '<span style="color:var(--success);font-size:11px;font-weight:600;">✓ Offline</span>',
+            downloading: `<span style="color:var(--accent-primary);font-size:11px;font-weight:600;">Downloading ${progress}%</span>`,
             queued: '<span style="color:var(--text-tertiary);font-size:11px;font-weight:600;">Queued</span>',
             failed: '<span style="color:var(--error);font-size:11px;font-weight:600;">Failed</span>'
         };
@@ -105,17 +111,17 @@ export class DownloadsScreen {
         return `
             <div class="content-item" data-dl-id="${download.id}">
                 <div class="content-item-number" style="font-size:11px;">
-                    ${type === 'failed' ? '!' : type === 'progress' ? '%' : '#'}
+                    ${type === 'failed' ? '✗' : type === 'progress' ? '⟳' : '✓'}
                 </div>
                 <div class="content-item-info" style="flex:1;overflow:hidden;">
                     <span class="content-item-title">${download.episodeOrChapterId || 'Unknown'}</span>
                     <span class="content-item-meta">
-                        ${statusMap[download.status] || ''}
-                        ${size ? ` · ${size}` : ''}
+                        ${typeBadge}${statusMap[download.status] || ''}${size ? ` · ${size}` : ''}
                     </span>
+                    ${errorText}
                     ${type === 'progress' ? `
-                        <div style="margin-top:6px;height:3px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">
-                            <div style="height:100%;width:${progress}%;background:var(--accent-primary);border-radius:2px;"></div>
+                        <div class="dl-progress-bar">
+                            <div class="dl-progress-fill" style="width:${progress}%;"></div>
                         </div>
                     ` : ''}
                 </div>
@@ -131,15 +137,22 @@ export class DownloadsScreen {
 
     async afterRender() {
         this._active = true;
-        // Auto-refresh while there are active downloads
+        this._setupRefreshTimer();
+        this._bindEvents();
+    }
+
+    _setupRefreshTimer() {
         if (this._refreshTimer) clearInterval(this._refreshTimer);
+        this._refreshTimer = null;
         const hasActive = this.downloads.some(d => d.status === 'downloading' || d.status === 'queued');
         if (hasActive) {
             this._refreshTimer = setInterval(() => {
                 if (this._active) this.refresh();
             }, 2000);
         }
+    }
 
+    _bindEvents() {
         document.querySelectorAll('.dl-delete-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -154,7 +167,7 @@ export class DownloadsScreen {
                 e.stopPropagation();
                 await DownloadManager.retry(btn.dataset.dlId);
                 showToast('Download requeued', 'info');
-                await this.refresh();
+                if (this._active) await this.refresh();
             });
         });
 
@@ -188,12 +201,40 @@ export class DownloadsScreen {
 
     async refresh() {
         if (!this._active) return;
+
+        // Guard: verify downloads screen is still showing in the DOM
         const container = document.getElementById('screen-container');
-        if (container) {
-            const html = await this.render();
-            container.innerHTML = html;
-            await this.afterRender();
+        if (!container || !container.querySelector('.downloads-screen')) {
+            this.deactivate();
+            return;
         }
+
+        // Fetch latest data (async gap — user may navigate away)
+        try {
+            this.downloads = await db.getDownloads();
+        } catch (err) {
+            this.downloads = [];
+        }
+
+        // Re-check after async gap
+        if (!this._active) return;
+        if (!container.querySelector('.downloads-screen')) {
+            this.deactivate();
+            return;
+        }
+
+        const html = await this.render();
+
+        // Re-check again after second async gap
+        if (!this._active) return;
+        if (!container.querySelector('.downloads-screen')) {
+            this.deactivate();
+            return;
+        }
+
+        container.innerHTML = html;
+        this._bindEvents();
+        this._setupRefreshTimer();
     }
 
     formatSize(bytes) {
