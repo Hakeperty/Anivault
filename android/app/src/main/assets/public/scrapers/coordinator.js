@@ -92,7 +92,7 @@ export class SearchCoordinator {
         }
     }
 
-    static async getAnimeEpisodes(animeId, animeUrl, source = 'aniwatch', animeTitle = '') {
+    static async getAnimeEpisodes(animeId, animeUrl, source = 'aniwatch', animeTitle = '', expectedEps = null) {
         // Skip slug extraction for non-aniwatch sources (e.g. jikan "mal-XXXXX" IDs)
         const isAniwatch = !source || source === 'aniwatch' || source === 'hianime';
         const fromId = isAniwatch ? this._extractAniwatchSlug(animeId) : '';
@@ -105,12 +105,14 @@ export class SearchCoordinator {
                 if (eps.length > 0) return eps;
             }
 
-            // Fallback: search AniWatch by title
+            // Fallback: search AniWatch by title with smart matching
             if (animeTitle) {
                 const searchResults = await AniWatchScraper.search(animeTitle);
-                const bestMatch = searchResults.find((item) => this._titlesMatch(item?.title, animeTitle)) || searchResults[0];
-                if (bestMatch?.id) {
-                    return await AniWatchScraper.getEpisodes(bestMatch.id);
+                if (searchResults.length > 0) {
+                    const bestMatch = this._findBestMatch(searchResults, animeTitle, expectedEps);
+                    if (bestMatch?.id) {
+                        return await AniWatchScraper.getEpisodes(bestMatch.id);
+                    }
                 }
             }
 
@@ -122,6 +124,64 @@ export class SearchCoordinator {
             console.error('Failed to get episodes:', error);
             return [];
         }
+    }
+
+    /**
+     * Smart match: score each AniWatch result against the Jikan item
+     * to avoid picking a same-name TV series when the user wants the Movie.
+     */
+    static _findBestMatch(results, title, expectedEps = null) {
+        const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const targetNorm = normalize(title);
+
+        let best = null;
+        let bestScore = -1;
+
+        for (const r of results) {
+            let score = 0;
+            const rNorm = normalize(r.title);
+
+            // Exact title match
+            if (rNorm === targetNorm) {
+                score += 100;
+            } else if (rNorm.includes(targetNorm) || targetNorm.includes(rNorm)) {
+                score += 50;
+            } else {
+                const targetWords = targetNorm.match(/[a-z0-9]+/g) || [];
+                const rWords = rNorm.match(/[a-z0-9]+/g) || [];
+                const overlap = targetWords.filter(w => rWords.includes(w)).length;
+                score += overlap * 10;
+            }
+
+            // Episode count matching — heavily penalize mismatches
+            const rEpCount = r.episodes?.sub || r.episodes?.total || 0;
+            if (expectedEps && rEpCount) {
+                if (rEpCount === expectedEps) {
+                    score += 60; // strong match
+                } else if (Math.abs(rEpCount - expectedEps) <= 2) {
+                    score += 20; // close enough (sometimes counts differ slightly)
+                } else {
+                    // Big mismatch: e.g. movie (1 ep) vs TV (12 eps)
+                    score -= 40;
+                }
+            }
+
+            // Type hint: movies get bonus if expected eps is 1
+            const rType = (r.animeType || '').toLowerCase();
+            if (expectedEps === 1 && rType === 'movie') score += 30;
+            if (expectedEps === 1 && rType === 'tv') score -= 20;
+
+            // Prefer results where the title is closer in length
+            const lenDiff = Math.abs(rNorm.length - targetNorm.length);
+            score -= lenDiff * 0.5;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best = r;
+            }
+        }
+
+        return best;
     }
 
     static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '') {

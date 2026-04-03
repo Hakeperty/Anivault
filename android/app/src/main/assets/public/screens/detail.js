@@ -126,7 +126,7 @@ export class DetailScreen {
         try {
             if (type === 'anime') {
                 this.episodes = await SearchCoordinator.getAnimeEpisodes(
-                    this.item.id, this.item.url, this.item.source, this.item.title
+                    this.item.id, this.item.url, this.item.source, this.item.title, this.item.episodes
                 );
                 this.episodes = this.episodes.map((ep) => ({
                     ...ep,
