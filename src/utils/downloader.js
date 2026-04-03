@@ -5,8 +5,9 @@
  * a "downloadedPages" field on the download record so the reader can show
  * them offline.
  *
- * Anime episodes: resolves the stream / embed URL via the coordinator and
- * caches the resolved URL so the player can use it without re-scraping.
+ * Anime episodes: resolves HLS stream → parses m3u8 → downloads all .ts
+ * segments → concatenates into a single video blob → stores as base64 data
+ * URL in IndexedDB for offline playback.
  *
  * Runs a processing loop that picks the next "queued" item and works on it.
  * Exposes start/stop and per-item cancel.
@@ -15,18 +16,16 @@
 import { db } from '../db/indexeddb.js';
 import { SearchCoordinator } from '../scrapers/coordinator.js';
 
-const MAX_CONCURRENT = 1; // one download at a time to avoid hammering sources
-const POLL_INTERVAL = 3000; // ms between queue checks when idle
+const POLL_INTERVAL = 3000;
 
 class _DownloadManager {
     constructor() {
         this._running = false;
         this._timer = null;
-        this._currentId = null;   // id of download being processed
-        this._aborted = false;    // flag to cancel current item
+        this._currentId = null;
+        this._aborted = false;
     }
 
-    /** Start the background processing loop (call once on app launch). */
     start() {
         if (this._running) return;
         this._running = true;
@@ -40,21 +39,31 @@ class _DownloadManager {
         console.log('[DL] DownloadManager stopped');
     }
 
-    /** Cancel a specific queued or in-progress download. */
     async cancel(downloadId) {
         if (this._currentId === downloadId) {
-            this._aborted = true; // the processing loop will pick this up
+            this._aborted = true;
         }
         try {
             await db.updateDownload(downloadId, { status: 'failed', error: 'Cancelled' });
         } catch (_) {}
     }
 
-    /** Retry a failed download by re-queuing it. */
     async retry(downloadId) {
         try {
             await db.updateDownload(downloadId, { status: 'queued', progress: 0, error: null });
         } catch (_) {}
+    }
+
+    /** Check if a download exists for a given library item + episode token */
+    async getDownloadForEpisode(libraryId, episodeToken) {
+        const all = await db.getDownloads();
+        return all.find(d =>
+            d.libraryId === libraryId &&
+            d.episodeOrChapterId &&
+            d.episodeOrChapterId.startsWith(episodeToken) &&
+            d.status === 'completed' &&
+            d.videoDataUrl
+        ) || null;
     }
 
     // ── internal loop ──
@@ -65,14 +74,12 @@ class _DownloadManager {
             const item = await this._nextQueued();
             if (item) {
                 await this._process(item);
-                // Immediately check for more work
                 if (this._running) { this._timer = setTimeout(() => this._tick(), 200); }
                 return;
             }
         } catch (err) {
             console.error('[DL] tick error', err);
         }
-        // Nothing to do — poll again later
         if (this._running) {
             this._timer = setTimeout(() => this._tick(), POLL_INTERVAL);
         }
@@ -123,13 +130,12 @@ class _DownloadManager {
         for (let i = 0; i < pages.length; i++) {
             if (this._aborted) throw new Error('Cancelled');
 
-            const pageUrl = pages[i];
             try {
-                const dataUrl = await this._fetchImageAsDataUrl(pageUrl);
+                const dataUrl = await this._fetchAsDataUrl(pages[i]);
                 downloadedPages.push(dataUrl);
             } catch (e) {
                 console.warn(`[DL] page ${i + 1} failed:`, e.message);
-                downloadedPages.push(null); // placeholder so indices stay correct
+                downloadedPages.push(null);
             }
 
             const progress = Math.round(((i + 1) / pages.length) * 100);
@@ -143,9 +149,141 @@ class _DownloadManager {
         });
     }
 
-    async _fetchImageAsDataUrl(url) {
-        // Use fetch() which CapacitorHttp patches to go through native HTTP (avoids CORS).
-        // CapacitorHttp.get doesn't support responseType 'blob', so fetch is the correct approach.
+    // ── Anime: download HLS stream as offline video ──
+
+    async _downloadAnime(item) {
+        const episodeId = item.sourceId || item.localPath || item.episodeOrChapterId;
+        const source = item.source || 'aniwatch';
+
+        await db.updateDownload(item.id, { progress: 2 });
+
+        // 1. Resolve stream URL
+        const streamData = await SearchCoordinator.getAnimeStreamUrl(episodeId, source);
+        if (!streamData || !streamData.url) throw new Error('Could not resolve stream URL');
+
+        // If it's an iframe-only stream, we can't download it
+        if (streamData.type === 'iframe') {
+            throw new Error('This episode uses an embed player and cannot be downloaded for offline viewing.');
+        }
+
+        await db.updateDownload(item.id, { progress: 5 });
+
+        const m3u8Url = streamData.url;
+
+        // 2. Fetch master m3u8
+        const m3u8Text = await this._fetchText(m3u8Url);
+        if (this._aborted) throw new Error('Cancelled');
+
+        // 3. Parse — if master playlist, pick a quality; if media playlist, use directly
+        let mediaUrl = m3u8Url;
+        let mediaText = m3u8Text;
+
+        if (m3u8Text.includes('#EXT-X-STREAM-INF')) {
+            // Master playlist — pick lowest bandwidth for smaller download
+            const lines = m3u8Text.split('\n');
+            let bestLine = null;
+            let bestBw = Infinity;
+            for (let i = 0; i < lines.length; i++) {
+                const match = lines[i].match(/#EXT-X-STREAM-INF.*BANDWIDTH=(\d+)/);
+                if (match) {
+                    const bw = parseInt(match[1], 10);
+                    const nextLine = lines[i + 1]?.trim();
+                    // Prefer 720p-ish (1-3M bandwidth) but fall back to lowest
+                    if (nextLine && !nextLine.startsWith('#')) {
+                        if (bw < bestBw) {
+                            bestBw = bw;
+                            bestLine = nextLine;
+                        }
+                    }
+                }
+            }
+            if (bestLine) {
+                mediaUrl = new URL(bestLine, m3u8Url).href;
+                mediaText = await this._fetchText(mediaUrl);
+            }
+        }
+
+        if (this._aborted) throw new Error('Cancelled');
+        await db.updateDownload(item.id, { progress: 10 });
+
+        // 4. Parse media playlist for .ts segment URLs
+        const segments = [];
+        const lines = mediaText.split('\n');
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('#')) {
+                segments.push(new URL(trimmed, mediaUrl).href);
+            }
+        }
+
+        if (segments.length === 0) throw new Error('No video segments found in playlist');
+        console.log(`[DL] Found ${segments.length} segments to download`);
+
+        // 5. Download all segments, building up a combined ArrayBuffer
+        const chunks = [];
+        let totalBytes = 0;
+        for (let i = 0; i < segments.length; i++) {
+            if (this._aborted) throw new Error('Cancelled');
+
+            try {
+                const resp = await fetch(segments[i], {
+                    headers: {
+                        'Referer': 'https://megacloud.blog/',
+                        'Origin': 'https://megacloud.blog'
+                    }
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const buf = await resp.arrayBuffer();
+                chunks.push(buf);
+                totalBytes += buf.byteLength;
+            } catch (e) {
+                console.warn(`[DL] segment ${i + 1}/${segments.length} failed:`, e.message);
+                // Skip failed segments — video will have a gap but still be watchable
+            }
+
+            // Progress: 10–90% for segment downloads
+            const progress = 10 + Math.round(((i + 1) / segments.length) * 80);
+            await db.updateDownload(item.id, { progress });
+        }
+
+        if (chunks.length === 0) throw new Error('Failed to download any video segments');
+
+        // 6. Concatenate into single blob
+        const blob = new Blob(chunks, { type: 'video/mp2t' });
+        console.log(`[DL] Total video size: ${(totalBytes / 1024 / 1024).toFixed(1)} MB`);
+
+        await db.updateDownload(item.id, { progress: 92 });
+
+        // 7. Convert to data URL for IndexedDB storage
+        const videoDataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+        });
+
+        await db.updateDownload(item.id, {
+            progress: 98,
+            videoDataUrl,
+            fileSize: totalBytes,
+            streamType: 'offline'
+        });
+    }
+
+    // ── Shared helpers ──
+
+    async _fetchText(url) {
+        const resp = await fetch(url, {
+            headers: {
+                'Referer': 'https://megacloud.blog/',
+                'Origin': 'https://megacloud.blog'
+            }
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
+        return resp.text();
+    }
+
+    async _fetchAsDataUrl(url) {
         const response = await fetch(url, {
             headers: { 'Referer': new URL(url).origin + '/' }
         });
@@ -157,13 +295,6 @@ class _DownloadManager {
             reader.onerror = () => reject(reader.error);
             reader.readAsDataURL(blob);
         });
-    }
-
-    // ── Anime: resolve & cache stream URL ──
-
-    async _downloadAnime(item) {
-        // Anime streams (HLS/iframe) cannot be downloaded for offline playback
-        throw new Error('Anime offline download is not supported. Episodes are streamed directly.');
     }
 }
 

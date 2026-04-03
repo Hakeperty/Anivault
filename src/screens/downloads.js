@@ -94,10 +94,16 @@ export class DownloadsScreen {
     renderDownloadItem(download, type) {
         const size = download.fileSize ? this.formatSize(download.fileSize) : '';
         const progress = download.progress || 0;
+        const itemType = download.itemType || 'anime';
+        const typeBadge = itemType === 'manga'
+            ? '<span style="color:var(--accent-secondary,#4ECDC4);font-size:10px;font-weight:700;background:rgba(78,205,196,.15);padding:1px 5px;border-radius:3px;margin-right:4px;">MANGA</span>'
+            : '<span style="color:var(--accent-primary,#FF6B35);font-size:10px;font-weight:700;background:rgba(255,107,53,.15);padding:1px 5px;border-radius:3px;margin-right:4px;">ANIME</span>';
+        const errorText = download.error && type === 'failed'
+            ? `<span style="color:var(--text-tertiary);font-size:10px;display:block;margin-top:2px;">${download.error}</span>` : '';
 
         const statusMap = {
-            completed: '<span style="color:var(--success);font-size:11px;font-weight:600;">Completed</span>',
-            downloading: '<span style="color:var(--accent-primary);font-size:11px;font-weight:600;">Downloading</span>',
+            completed: '<span style="color:var(--success);font-size:11px;font-weight:600;">✓ Offline</span>',
+            downloading: `<span style="color:var(--accent-primary);font-size:11px;font-weight:600;">Downloading ${progress}%</span>`,
             queued: '<span style="color:var(--text-tertiary);font-size:11px;font-weight:600;">Queued</span>',
             failed: '<span style="color:var(--error);font-size:11px;font-weight:600;">Failed</span>'
         };
@@ -105,17 +111,17 @@ export class DownloadsScreen {
         return `
             <div class="content-item" data-dl-id="${download.id}">
                 <div class="content-item-number" style="font-size:11px;">
-                    ${type === 'failed' ? '!' : type === 'progress' ? '%' : '#'}
+                    ${type === 'failed' ? '✗' : type === 'progress' ? '⟳' : '✓'}
                 </div>
                 <div class="content-item-info" style="flex:1;overflow:hidden;">
                     <span class="content-item-title">${download.episodeOrChapterId || 'Unknown'}</span>
                     <span class="content-item-meta">
-                        ${statusMap[download.status] || ''}
-                        ${size ? ` · ${size}` : ''}
+                        ${typeBadge}${statusMap[download.status] || ''}${size ? ` · ${size}` : ''}
                     </span>
+                    ${errorText}
                     ${type === 'progress' ? `
                         <div style="margin-top:6px;height:3px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden;">
-                            <div style="height:100%;width:${progress}%;background:var(--accent-primary);border-radius:2px;"></div>
+                            <div style="height:100%;width:${progress}%;background:var(--accent-primary);border-radius:2px;transition:width .3s;"></div>
                         </div>
                     ` : ''}
                 </div>

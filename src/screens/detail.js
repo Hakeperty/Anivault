@@ -98,11 +98,6 @@ export class DetailScreen {
         // Library button
         document.getElementById('library-btn')?.addEventListener('click', () => this.toggleLibrary());
         document.getElementById('download-btn')?.addEventListener('click', () => {
-            const type = this.item.type || 'anime';
-            if (type === 'anime') {
-                showToast('Anime offline download is not supported yet. Episodes are streamed directly.', 'info');
-                return;
-            }
             this.openDownloadPicker();
         });
 
@@ -147,11 +142,15 @@ export class DetailScreen {
             return;
         }
 
+        // Check which episodes are downloaded
+        this._markDownloadedEpisodes(container);
+
         container.innerHTML = this.episodes.map(ep => `
             <div class="content-item" data-episode="${ep.episode || ep.number}" data-url="${ep.url || ''}">
                 <div class="content-item-number">${ep.episode || ep.number}</div>
                 <div class="content-item-info">
                     <span class="content-item-title">${ep.title || `Episode ${ep.episode || ep.number}`}</span>
+                    <span class="content-item-meta ep-dl-badge" data-ep-num="${ep.episode || ep.number}"></span>
                 </div>
                 <svg class="content-item-play" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             </div>
@@ -211,6 +210,26 @@ export class DetailScreen {
                 }
             });
         });
+    }
+
+    /** Async badge: marks episodes that have been downloaded for offline use */
+    async _markDownloadedEpisodes() {
+        try {
+            const downloads = await db.getDownloads();
+            const completed = downloads.filter(d =>
+                d.libraryId === this.item.id && d.status === 'completed'
+            );
+            // Wait a tick for DOM to be rendered
+            setTimeout(() => {
+                for (const dl of completed) {
+                    const epMatch = (dl.episodeOrChapterId || '').match(/^ep-(\d+)/);
+                    if (epMatch) {
+                        const badge = document.querySelector(`.ep-dl-badge[data-ep-num="${epMatch[1]}"]`);
+                        if (badge) badge.innerHTML = '<span style="color:var(--success);font-size:10px;">✓ Offline</span>';
+                    }
+                }
+            }, 50);
+        } catch (_) {}
     }
 
     async toggleLibrary() {

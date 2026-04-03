@@ -5,6 +5,7 @@
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
 import { SearchCoordinator } from '../scrapers/coordinator.js';
+import { DownloadManager } from '../utils/downloader.js';
 
 const HLS_CDN = 'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js';
 
@@ -158,6 +159,66 @@ export class PlayerScreen {
 
         try {
             const loadingText = loadingEl.querySelector('p');
+            if (loadingText) loadingText.textContent = 'Finding stream…';
+
+            // Check for offline download first
+            const offlineData = await this._checkOfflineDownload();
+            if (offlineData) {
+                clearTimeout(loadTimeout);
+                if (loadingText) loadingText.textContent = 'Loading offline video…';
+                video.src = offlineData;
+                video.addEventListener('loadedmetadata', () => {
+                    loadingEl.style.display = 'none';
+                    this._restoreProgress(video);
+                    video.play().catch(() => {});
+                }, { once: true });
+                video.addEventListener('error', () => {
+                    loadingEl.style.display = 'none';
+                    showToast('Offline video corrupted. Streaming instead…', 'error');
+                    this._initPlayerOnline(video, iframe, loadingEl, loadingText);
+                }, { once: true });
+                this._setupControls(video);
+                this._startProgressSaving(video);
+                return;
+            }
+
+            await this._initPlayerOnline(video, iframe, loadingEl, loadingText);
+        } catch (err) {
+            clearTimeout(loadTimeout);
+            console.error('Player init failed:', err);
+            this._showError(err.message || 'Failed to load stream.');
+        }
+    }
+
+    /** Check if this episode has been downloaded for offline playback */
+    async _checkOfflineDownload() {
+        try {
+            const epNum = this.episode.number ?? this.episode.episode ?? '';
+            const token = `ep-${epNum}`;
+            const libraryId = this.libraryItem?.id;
+            if (!libraryId || !epNum) return null;
+
+            const dl = await DownloadManager.getDownloadForEpisode(libraryId, token);
+            if (dl && dl.videoDataUrl) {
+                console.log('[Player] Found offline download, using cached video');
+                return dl.videoDataUrl;
+            }
+        } catch (e) {
+            console.warn('[Player] Offline check failed:', e.message);
+        }
+        return null;
+    }
+
+    /** Online streaming init (extracted from _initPlayer) */
+    async _initPlayerOnline(video, iframe, loadingEl, loadingText) {
+        // Re-apply safety timeout for online streaming
+        const loadTimeout = setTimeout(() => {
+            if (loadingEl.style.display !== 'none') {
+                this._showError('Stream is taking too long. Tap Retry.');
+            }
+        }, 40000);
+
+        try {
             if (loadingText) loadingText.textContent = 'Finding stream…';
 
             const streamData = await SearchCoordinator.getAnimeStreamUrl(
