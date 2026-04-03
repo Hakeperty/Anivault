@@ -100,22 +100,32 @@ export class SearchCoordinator {
         const targetSlug = fromId || fromUrl;
 
         try {
+            // 1. Direct slug if available
             if (targetSlug) {
                 const eps = await AniWatchScraper.getEpisodes(targetSlug);
                 if (eps.length > 0) return eps;
             }
 
-            // Fallback: search AniWatch by title with smart matching
+            // 2. Search AniWatch by title with smart matching
             if (animeTitle) {
-                const searchResults = await AniWatchScraper.search(animeTitle);
-                if (searchResults.length > 0) {
-                    const bestMatch = this._findBestMatch(searchResults, animeTitle, expectedEps);
-                    if (bestMatch?.id) {
-                        return await AniWatchScraper.getEpisodes(bestMatch.id);
-                    }
+                const eps = await this._searchAndMatchEpisodes(animeTitle, expectedEps);
+                if (eps.length > 0) return eps;
+
+                // 3. Retry with cleaned title (remove season markers, parentheticals, etc.)
+                const cleanedTitle = animeTitle
+                    .replace(/\s*\(.*?\)\s*/g, ' ')        // remove (TV), (2024), etc.
+                    .replace(/\s*season\s*\d+/gi, '')       // remove "Season 2"
+                    .replace(/\s*\d+(st|nd|rd|th)\s+season/gi, '') // remove "2nd Season"
+                    .replace(/\s*part\s*\d+/gi, '')         // remove "Part 2"
+                    .replace(/\s+/g, ' ').trim();
+
+                if (cleanedTitle && cleanedTitle !== animeTitle) {
+                    const cleanEps = await this._searchAndMatchEpisodes(cleanedTitle, expectedEps);
+                    if (cleanEps.length > 0) return cleanEps;
                 }
             }
 
+            // 4. Last resort: try raw ID
             if (targetSlug) {
                 return await AniWatchScraper.getEpisodes(animeId || animeUrl);
             }
@@ -124,6 +134,23 @@ export class SearchCoordinator {
             console.error('Failed to get episodes:', error);
             return [];
         }
+    }
+
+    /** Search AniWatch by title and get episodes from best match */
+    static async _searchAndMatchEpisodes(title, expectedEps) {
+        try {
+            const searchResults = await AniWatchScraper.search(title);
+            if (searchResults.length > 0) {
+                const bestMatch = this._findBestMatch(searchResults, title, expectedEps);
+                if (bestMatch?.id) {
+                    const eps = await AniWatchScraper.getEpisodes(bestMatch.id);
+                    if (eps.length > 0) return eps;
+                }
+            }
+        } catch (e) {
+            console.warn('[Coordinator] AniWatch search+match failed for', title, e.message);
+        }
+        return [];
     }
 
     /**
@@ -187,22 +214,34 @@ export class SearchCoordinator {
     static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '') {
         const normalizedSource = String(source || '').toLowerCase();
         const katanaTarget = mangaUrl || mangaId;
+
+        // Try primary source
+        let chapters = [];
         try {
             if (normalizedSource === 'mangakatana') {
-                return await MangaKatanaScraper.getChapters(katanaTarget);
+                chapters = await MangaKatanaScraper.getChapters(katanaTarget);
+            } else {
+                chapters = await MangaDexScraper.getChapters(mangaId);
             }
-            return await MangaDexScraper.getChapters(mangaId);
         } catch (error) {
-            console.error('Failed to get chapters from', source, ':', error);
-            // Fallback to secondary source
-            try {
-                if (normalizedSource === 'mangakatana') {
-                    return await MangaDexScraper.getChapters(mangaId);
-                }
-                return await MangaKatanaScraper.getChapters(katanaTarget);
-            } catch (_) {}
-            return [];
+            console.warn('Primary chapter source failed:', source, error.message);
         }
+
+        // Fallback to secondary source if primary returned nothing
+        if (!chapters || chapters.length === 0) {
+            try {
+                console.log('[Coordinator] Trying fallback chapter source for', mangaId);
+                if (normalizedSource === 'mangakatana') {
+                    chapters = await MangaDexScraper.getChapters(mangaId);
+                } else {
+                    chapters = await MangaKatanaScraper.getChapters(katanaTarget);
+                }
+            } catch (fallbackErr) {
+                console.error('Fallback chapter source also failed:', fallbackErr.message);
+            }
+        }
+
+        return chapters || [];
     }
 
     static async getChapterPages(chapterId, source = 'mangakatana') {
@@ -211,21 +250,33 @@ export class SearchCoordinator {
             .map((page) => (typeof page === 'string' ? page : page?.url))
             .filter(Boolean);
 
+        // Try primary source
+        let pages = [];
         try {
             if (normalizedSource === 'mangakatana') {
-                return normalizePages(await MangaKatanaScraper.getPages(chapterId));
+                pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
+            } else {
+                pages = normalizePages(await MangaDexScraper.getPages(chapterId));
             }
-            return normalizePages(await MangaDexScraper.getPages(chapterId));
         } catch (error) {
-            console.error('Failed to get pages from', source, ':', error);
-            try {
-                if (normalizedSource === 'mangakatana') {
-                    return normalizePages(await MangaDexScraper.getPages(chapterId));
-                }
-                return normalizePages(await MangaKatanaScraper.getPages(chapterId));
-            } catch (_) {}
-            return [];
+            console.warn('Primary page source failed:', source, error.message);
         }
+
+        // Fallback to secondary source if primary returned nothing
+        if (!pages || pages.length === 0) {
+            try {
+                console.log('[Coordinator] Trying fallback page source for', chapterId);
+                if (normalizedSource === 'mangakatana') {
+                    pages = normalizePages(await MangaDexScraper.getPages(chapterId));
+                } else {
+                    pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
+                }
+            } catch (fallbackErr) {
+                console.error('Fallback page source also failed:', fallbackErr.message);
+            }
+        }
+
+        return pages || [];
     }
 
     static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch', audioType = null) {

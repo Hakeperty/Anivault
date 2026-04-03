@@ -84,7 +84,7 @@ export class MangaDexScraper {
     static async getChapters(mangaId) {
         try {
             const allChapters = [];
-            const PAGE_LIMIT = 100;
+            const PAGE_LIMIT = 500;
             let offset = 0;
             let total = Infinity;
 
@@ -103,13 +103,17 @@ export class MangaDexScraper {
                 allChapters.push(...batch);
 
                 offset += PAGE_LIMIT;
-                // Safety: stop after 2000 chapters or if batch was empty
-                if (batch.length === 0 || offset >= 2000) break;
+                // Safety: stop after 10000 or if batch was empty
+                if (batch.length === 0 || offset >= 10000) break;
             }
 
             // Deduplicate: keep first occurrence of each chapter number
+            // Chapters with null numbers (oneshots, extras) are never deduped against each other
+            // Filter out external-only chapters (pages: 0, hosted off-site) that can't be read in-app
             const seen = new Set();
             return allChapters.filter(ch => {
+                if (ch.pages === 0) return false; // external chapter, no in-app pages
+                if (ch.chapter === null) return true; // keep all unnumbered chapters
                 const key = ch.chapter;
                 if (seen.has(key)) return false;
                 seen.add(key);
@@ -201,7 +205,8 @@ export class MangaDexScraper {
     }
 
     /**
-     * Parse chapter list from API response
+     * Parse chapter list from API response.
+     * Handles chapters with null/empty chapter numbers (prologue, extras, oneshots).
      */
     static parseChapterList(data) {
         const chapters = [];
@@ -209,22 +214,33 @@ export class MangaDexScraper {
         data.data?.forEach(chapter => {
             try {
                 const attributes = chapter.attributes || {};
-                const chapterNum = parseFloat(attributes.chapter) || 0;
+                const rawChapter = attributes.chapter;
+                // Accept chapters with null/empty chapter number (prologues, oneshots, extras)
+                // Assign them a synthetic number based on position to preserve ordering
+                const hasNumber = rawChapter !== null && rawChapter !== undefined && rawChapter !== '';
+                const chapterNum = hasNumber ? parseFloat(rawChapter) : null;
 
                 chapters.push({
                     id: chapter.id,
                     chapter: chapterNum,
-                    title: attributes.title || `Chapter ${chapterNum}`,
+                    title: attributes.title || (hasNumber ? `Chapter ${rawChapter}` : 'Oneshot'),
                     volume: attributes.volume || null,
                     pages: parseInt(attributes.pages) || 0,
-                    uploadedAt: attributes.updatedAt || new Date().toISOString()
+                    uploadedAt: attributes.updatedAt || new Date().toISOString(),
+                    source: 'mangadex'
                 });
             } catch (e) {
                 console.debug('Chapter parse error:', e);
             }
         });
 
-        return chapters.sort((a, b) => a.chapter - b.chapter);
+        // Sort: numbered chapters by number, then unnumbered at end by upload date
+        return chapters.sort((a, b) => {
+            if (a.chapter !== null && b.chapter !== null) return a.chapter - b.chapter;
+            if (a.chapter !== null) return -1;
+            if (b.chapter !== null) return 1;
+            return new Date(a.uploadedAt) - new Date(b.uploadedAt);
+        });
     }
 
     /**

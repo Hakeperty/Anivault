@@ -14,6 +14,7 @@ export class DetailScreen {
         this.episodes = [];
         this.chapters = [];
         this.isInLibrary = false;
+        this.isRecommended = false;
         this.isLoadingContent = false;
         this._downloadBtnState = 'idle';
     }
@@ -25,6 +26,13 @@ export class DetailScreen {
             this.isInLibrary = !!existing;
         } catch (e) {
             this.isInLibrary = false;
+        }
+
+        // Check if already recommended
+        try {
+            this.isRecommended = await db.isRecommended(this.item.id);
+        } catch (e) {
+            this.isRecommended = false;
         }
 
         const type = this.item.type || 'anime';
@@ -64,6 +72,9 @@ export class DetailScreen {
                             <div class="detail-actions">
                                 <button id="library-btn" class="btn ${this.isInLibrary ? 'btn-secondary' : 'btn-primary'}">
                                     ${this.isInLibrary ? 'In Library' : 'Add to Library'}
+                                </button>
+                                <button id="recommend-btn" class="btn ${this.isRecommended ? 'btn-recommend-active' : 'btn-secondary'}">
+                                    ${this.isRecommended ? '★ Recommended' : '☆ Recommend'}
                                 </button>
                                 <button id="download-btn" class="btn btn-secondary">
                                     Download
@@ -108,6 +119,9 @@ export class DetailScreen {
         document.getElementById('download-btn')?.addEventListener('click', () => {
             this.openDownloadPicker();
         });
+
+        // Recommend button
+        document.getElementById('recommend-btn')?.addEventListener('click', () => this.toggleRecommend());
 
         // Load episodes/chapters
         this.loadContent();
@@ -343,16 +357,18 @@ export class DetailScreen {
             return;
         }
 
-        container.innerHTML = this.chapters.map(ch => `
-            <div class="content-item" data-chapter="${ch.chapter || ch.id}" data-id="${ch.id}">
-                <div class="content-item-number">${ch.chapter || '?'}</div>
+        container.innerHTML = this.chapters.map(ch => {
+            const chNum = ch.chapter !== null && ch.chapter !== undefined ? ch.chapter : '?';
+            return `
+            <div class="content-item" data-chapter="${ch.chapter ?? ch.id}" data-id="${ch.id}">
+                <div class="content-item-number">${chNum}</div>
                 <div class="content-item-info">
-                    <span class="content-item-title">${ch.title || `Chapter ${ch.chapter}`}</span>
+                    <span class="content-item-title">${ch.title || `Chapter ${chNum}`}</span>
                     ${ch.pages ? `<span class="content-item-meta">${ch.pages} pages</span>` : ''}
                 </div>
                 <svg class="content-item-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
 
         container.querySelectorAll('.content-item').forEach(el => {
             el.addEventListener('click', () => {
@@ -426,6 +442,43 @@ export class DetailScreen {
         } catch (error) {
             console.error('Library toggle error:', error);
             showToast('Failed to update library', 'error');
+        }
+    }
+
+    async toggleRecommend() {
+        const btn = document.getElementById('recommend-btn');
+        if (!btn) return;
+
+        try {
+            if (this.isRecommended) {
+                await db.removeRecommendation(this.item.id);
+                this.isRecommended = false;
+                btn.className = 'btn btn-secondary';
+                btn.textContent = '☆ Recommend';
+                showToast(`Removed recommendation`, 'success');
+            } else {
+                const recItem = {
+                    id: this.item.id,
+                    title: this.item.title,
+                    coverImage: this.item.coverImage || this.item.coverUrl || '',
+                    description: this.item.description || '',
+                    type: this.item.type || 'anime',
+                    source: this.item.source || this.source,
+                    url: this.item.url || '',
+                    genres: this.item.genres || [],
+                    episodes: this.item.episodes || null,
+                    chapters: this.item.chapters || null,
+                    score: this.item.score || null
+                };
+                await db.addRecommendation(recItem);
+                this.isRecommended = true;
+                btn.className = 'btn btn-recommend-active';
+                btn.textContent = '★ Recommended';
+                showToast(`Recommended "${this.item.title}"`, 'success');
+            }
+        } catch (error) {
+            console.error('Recommend toggle error:', error);
+            showToast('Failed to update recommendation', 'error');
         }
     }
 

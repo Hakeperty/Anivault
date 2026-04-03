@@ -357,16 +357,18 @@ export class DetailScreen {
             return;
         }
 
-        container.innerHTML = this.chapters.map(ch => `
-            <div class="content-item" data-chapter="${ch.chapter || ch.id}" data-id="${ch.id}">
-                <div class="content-item-number">${ch.chapter || '?'}</div>
+        container.innerHTML = this.chapters.map(ch => {
+            const chNum = ch.chapter !== null && ch.chapter !== undefined ? ch.chapter : '?';
+            return `
+            <div class="content-item" data-chapter="${ch.chapter ?? ch.id}" data-id="${ch.id}">
+                <div class="content-item-number">${chNum}</div>
                 <div class="content-item-info">
-                    <span class="content-item-title">${ch.title || `Chapter ${ch.chapter}`}</span>
+                    <span class="content-item-title">${ch.title || `Chapter ${chNum}`}</span>
                     ${ch.pages ? `<span class="content-item-meta">${ch.pages} pages</span>` : ''}
                 </div>
                 <svg class="content-item-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
 
         container.querySelectorAll('.content-item').forEach(el => {
             el.addEventListener('click', () => {

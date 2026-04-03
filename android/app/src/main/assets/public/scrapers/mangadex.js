@@ -33,21 +33,42 @@ export class MangaDexScraper {
     }
 
     /**
-     * Search for manga on MangaDex
+     * Search for manga on MangaDex.
+     * Tries the title query first; if no results, retries with the original
+     * query as an alt-title to catch Japanese/romaji names like
+     * "Sono Bisque Doll wa Koi o Suru".
      */
     static async search(query) {
         try {
-            const params = new URLSearchParams();
-            params.set('title', query);
-            params.set('limit', '15');
-            params.append('includes[]', 'cover_art');
-            params.append('contentRating[]', 'safe');
-            params.append('contentRating[]', 'suggestive');
-            params.append('contentRating[]', 'erotica');
+            const baseParams = () => {
+                const p = new URLSearchParams();
+                p.set('limit', '15');
+                p.append('includes[]', 'cover_art');
+                p.append('contentRating[]', 'safe');
+                p.append('contentRating[]', 'suggestive');
+                p.append('contentRating[]', 'erotica');
+                return p;
+            };
 
+            // Primary search by title
+            const params = baseParams();
+            params.set('title', query);
             const url = `${MANGADEX_API}/manga?${params.toString()}`;
             const data = await http.getJSON(url);
-            const results = this.parseSearchResults(data);
+            let results = this.parseSearchResults(data);
+
+            // If no results, retry with the query in the generic order parameter
+            // which searches across title + altTitles. This helps find manga by
+            // Japanese or romanised titles (e.g. "Sono Bisque Doll wa Koi o Suru").
+            if (results.length === 0) {
+                const altParams = baseParams();
+                altParams.set('title', query);
+                altParams.set('order[relevance]', 'desc');
+                const altUrl = `${MANGADEX_API}/manga?${altParams.toString()}`;
+                const altData = await http.getJSON(altUrl);
+                results = this.parseSearchResults(altData);
+            }
+
             return await this._attachStatistics(results);
         } catch (error) {
             console.error('MangaDex search error:', error);
@@ -56,18 +77,48 @@ export class MangaDexScraper {
     }
 
     /**
-     * Get chapter list for a manga
+     * Get chapter list for a manga.
+     * Paginates through all results (MangaDex caps each response at 500).
+     * Deduplicates by chapter number (keeps first occurrence per number).
      */
     static async getChapters(mangaId) {
         try {
-            const params = new URLSearchParams();
-            params.set('limit', '100');
-            params.set('order[chapter]', 'asc');
-            params.append('translatedLanguage[]', 'en');
+            const allChapters = [];
+            const PAGE_LIMIT = 500;
+            let offset = 0;
+            let total = Infinity;
 
-            const url = `${MANGADEX_API}/manga/${mangaId}/feed?${params.toString()}`;
-            const data = await http.getJSON(url);
-            return this.parseChapterList(data);
+            while (offset < total) {
+                const params = new URLSearchParams();
+                params.set('limit', String(PAGE_LIMIT));
+                params.set('offset', String(offset));
+                params.set('order[chapter]', 'asc');
+                params.append('translatedLanguage[]', 'en');
+
+                const url = `${MANGADEX_API}/manga/${mangaId}/feed?${params.toString()}`;
+                const data = await http.getJSON(url);
+                total = data.total ?? 0;
+
+                const batch = this.parseChapterList(data);
+                allChapters.push(...batch);
+
+                offset += PAGE_LIMIT;
+                // Safety: stop after 10000 or if batch was empty
+                if (batch.length === 0 || offset >= 10000) break;
+            }
+
+            // Deduplicate: keep first occurrence of each chapter number
+            // Chapters with null numbers (oneshots, extras) are never deduped against each other
+            // Filter out external-only chapters (pages: 0, hosted off-site) that can't be read in-app
+            const seen = new Set();
+            return allChapters.filter(ch => {
+                if (ch.pages === 0) return false; // external chapter, no in-app pages
+                if (ch.chapter === null) return true; // keep all unnumbered chapters
+                const key = ch.chapter;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
         } catch (error) {
             console.error('MangaDex chapter fetch error:', error);
             return [];
@@ -154,7 +205,8 @@ export class MangaDexScraper {
     }
 
     /**
-     * Parse chapter list from API response
+     * Parse chapter list from API response.
+     * Handles chapters with null/empty chapter numbers (prologue, extras, oneshots).
      */
     static parseChapterList(data) {
         const chapters = [];
@@ -162,22 +214,33 @@ export class MangaDexScraper {
         data.data?.forEach(chapter => {
             try {
                 const attributes = chapter.attributes || {};
-                const chapterNum = parseFloat(attributes.chapter) || 0;
+                const rawChapter = attributes.chapter;
+                // Accept chapters with null/empty chapter number (prologues, oneshots, extras)
+                // Assign them a synthetic number based on position to preserve ordering
+                const hasNumber = rawChapter !== null && rawChapter !== undefined && rawChapter !== '';
+                const chapterNum = hasNumber ? parseFloat(rawChapter) : null;
 
                 chapters.push({
                     id: chapter.id,
                     chapter: chapterNum,
-                    title: attributes.title || `Chapter ${chapterNum}`,
+                    title: attributes.title || (hasNumber ? `Chapter ${rawChapter}` : 'Oneshot'),
                     volume: attributes.volume || null,
                     pages: parseInt(attributes.pages) || 0,
-                    uploadedAt: attributes.updatedAt || new Date().toISOString()
+                    uploadedAt: attributes.updatedAt || new Date().toISOString(),
+                    source: 'mangadex'
                 });
             } catch (e) {
                 console.debug('Chapter parse error:', e);
             }
         });
 
-        return chapters.sort((a, b) => a.chapter - b.chapter);
+        // Sort: numbered chapters by number, then unnumbered at end by upload date
+        return chapters.sort((a, b) => {
+            if (a.chapter !== null && b.chapter !== null) return a.chapter - b.chapter;
+            if (a.chapter !== null) return -1;
+            if (b.chapter !== null) return 1;
+            return new Date(a.uploadedAt) - new Date(b.uploadedAt);
+        });
     }
 
     /**
