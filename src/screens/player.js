@@ -20,6 +20,7 @@ export class PlayerScreen {
         this.playbackRate = 1;
         this._skipIntroDismissed = false;
         this._autoPlayTimer = null;
+        this._audioType = localStorage.getItem('anivault-audio-pref') || 'sub';
     }
 
     async render() {
@@ -44,11 +45,12 @@ export class PlayerScreen {
                 <!-- Iframe player (for embed streams) -->
                 <iframe id="player-iframe" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#000;z-index:1;" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
 
-                <!-- Iframe overlay controls -->
-                <div id="iframe-controls" style="display:none;position:absolute;top:0;left:0;width:100%;z-index:2;padding:12px;background:linear-gradient(to bottom,rgba(0,0,0,0.7),transparent);">
-                    <button class="btn btn-secondary btn-small" id="iframe-back-btn" style="font-size:14px;">← Back</button>
-                    <span style="color:#fff;margin-left:12px;font-size:14px;">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
-                </div>
+                <!-- Iframe floating back button (always visible in iframe mode) -->
+                <button id="iframe-back-btn" class="iframe-float-back" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="22" height="22"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <!-- Iframe sub/dub toggle (always visible in iframe mode) -->
+                <button id="iframe-audio-toggle" class="iframe-float-audio" style="display:none;">${this._audioType === 'dub' ? 'DUB' : 'SUB'}</button>
 
                 <!-- Video element -->
                 <video id="player-video" playsinline></video>
@@ -68,7 +70,8 @@ export class PlayerScreen {
                     <div class="player-controls-top">
                         <button class="btn btn-secondary btn-small" id="player-back-btn">← Back</button>
                         <span class="player-title">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
-                        <button class="player-ctrl-btn" id="player-speed-btn" title="Playback Speed" style="margin-left:auto;font-size:13px;min-width:44px;">1x</button>
+                        <button class="player-ctrl-btn" id="player-audio-toggle" title="Sub/Dub" style="margin-left:auto;font-size:12px;min-width:44px;background:rgba(255,255,255,.15);border-radius:4px;">${this._audioType === 'dub' ? 'DUB' : 'SUB'}</button>
+                        <button class="player-ctrl-btn" id="player-speed-btn" title="Playback Speed" style="font-size:13px;min-width:44px;">1x</button>
                     </div>
                     <div class="player-controls-center" id="player-center">
                         <button class="player-ctrl-btn" id="player-rw">
@@ -97,6 +100,7 @@ export class PlayerScreen {
     async afterRender() {
         this._injectStyles();
         this._setupBackButtons();
+        this._setupAudioToggle();
         await this._initPlayer();
     }
 
@@ -129,6 +133,10 @@ export class PlayerScreen {
         if (iframe) iframe.src = 'about:blank';
     }
 
+    deactivate() {
+        this._cleanup();
+    }
+
     /* ── Player init ── */
 
     async _initPlayer() {
@@ -154,7 +162,8 @@ export class PlayerScreen {
 
             const streamData = await SearchCoordinator.getAnimeStreamUrl(
                 this.episode.episodeId || this.episode.id || this.episode.url,
-                this.episode.source || this.libraryItem?.source || 'aniwatch'
+                this.episode.source || this.libraryItem?.source || 'aniwatch',
+                this._audioType
             );
             if (!streamData || !streamData.url) throw new Error('No stream URL found');
 
@@ -325,22 +334,12 @@ export class PlayerScreen {
         document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
 
         iframe.style.display = 'block';
-        document.getElementById('iframe-controls').style.display = 'flex';
+        // Show persistent floating back button (always visible — not auto-hidden)
+        const backBtn = document.getElementById('iframe-back-btn');
+        if (backBtn) backBtn.style.display = 'flex';
+        const audioBtn = document.getElementById('iframe-audio-toggle');
+        if (audioBtn) audioBtn.style.display = 'block';
         iframe.src = embedUrl;
-
-        let overlayTimer = setTimeout(() => {
-            document.getElementById('iframe-controls').style.display = 'none';
-        }, 5000);
-        iframe.parentElement.addEventListener('click', (e) => {
-            if (e.target === iframe) return;
-            const ctrl = document.getElementById('iframe-controls');
-            if (ctrl) {
-                const visible = ctrl.style.display !== 'none';
-                ctrl.style.display = visible ? 'none' : 'flex';
-                clearTimeout(overlayTimer);
-                if (!visible) overlayTimer = setTimeout(() => { ctrl.style.display = 'none'; }, 5000);
-            }
-        });
 
         setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
     }
@@ -512,6 +511,33 @@ export class PlayerScreen {
         });
     }
 
+    /* ── Sub/Dub audio toggle ── */
+
+    _setupAudioToggle() {
+        const hlsBtn = document.getElementById('player-audio-toggle');
+        const iframeBtn = document.getElementById('iframe-audio-toggle');
+        const toggle = () => this._switchAudioType();
+        hlsBtn?.addEventListener('click', toggle);
+        iframeBtn?.addEventListener('click', toggle);
+    }
+
+    _switchAudioType() {
+        const newType = this._audioType === 'dub' ? 'sub' : 'dub';
+        this._audioType = newType;
+        localStorage.setItem('anivault-audio-pref', newType);
+        showToast(`Switching to ${newType.toUpperCase()}...`, 'info');
+
+        // Re-launch player with new audio type (fresh instance reads from localStorage)
+        this._cleanup();
+        document.dispatchEvent(new CustomEvent('navigateToPlayer', {
+            detail: {
+                libraryItem: this.libraryItem,
+                episode: this.episode,
+                allEpisodes: this.allEpisodes
+            }
+        }));
+    }
+
     /* ── Skip intro (visible 0:00–1:30) ── */
 
     _setupSkipIntro(video) {
@@ -661,6 +687,22 @@ export class PlayerScreen {
                 font-weight:600; cursor:pointer; backdrop-filter:blur(4px);
             }
             .player-skip-intro:active { transform:scale(.95); }
+            .iframe-float-back {
+                position:absolute; top:12px; left:12px; z-index:5;
+                width:40px; height:40px; border-radius:50%;
+                background:rgba(0,0,0,0.5); border:none; color:#fff;
+                cursor:pointer; align-items:center; justify-content:center;
+                backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+            }
+            .iframe-float-back:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
+            .iframe-float-audio {
+                position:absolute; top:12px; right:12px; z-index:5;
+                padding:6px 12px; border-radius:4px;
+                background:rgba(0,0,0,0.5); border:none; color:#fff;
+                font-size:12px; font-weight:700; cursor:pointer;
+                backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+            }
+            .iframe-float-audio:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
         `;
         document.head.appendChild(style);
     }

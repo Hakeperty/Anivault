@@ -97,7 +97,14 @@ export class DetailScreen {
 
         // Library button
         document.getElementById('library-btn')?.addEventListener('click', () => this.toggleLibrary());
-        document.getElementById('download-btn')?.addEventListener('click', () => this.openDownloadPicker());
+        document.getElementById('download-btn')?.addEventListener('click', () => {
+            const type = this.item.type || 'anime';
+            if (type === 'anime') {
+                showToast('Anime offline download is not supported yet. Episodes are streamed directly.', 'info');
+                return;
+            }
+            this.openDownloadPicker();
+        });
 
         // Load episodes/chapters
         this.loadContent();

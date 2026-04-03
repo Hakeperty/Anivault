@@ -144,25 +144,11 @@ class _DownloadManager {
     }
 
     async _fetchImageAsDataUrl(url) {
-        // Use Capacitor HTTP if available (avoids CORS), otherwise fetch
-        if (window.Capacitor?.Plugins?.CapacitorHttp) {
-            const resp = await window.Capacitor.Plugins.CapacitorHttp.get({
-                url,
-                responseType: 'blob',
-                headers: { 'Referer': new URL(url).origin + '/' }
-            });
-            if (resp.data && typeof resp.data === 'string' && resp.data.startsWith('data:')) {
-                return resp.data;
-            }
-            // Fallback: base64 field
-            if (resp.data) {
-                const ct = resp.headers?.['content-type'] || 'image/jpeg';
-                return `data:${ct};base64,${resp.data}`;
-            }
-        }
-
-        // Browser / fallback
-        const response = await fetch(url, { mode: 'cors', headers: { 'Referer': new URL(url).origin + '/' } });
+        // Use fetch() which CapacitorHttp patches to go through native HTTP (avoids CORS).
+        // CapacitorHttp.get doesn't support responseType 'blob', so fetch is the correct approach.
+        const response = await fetch(url, {
+            headers: { 'Referer': new URL(url).origin + '/' }
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const blob = await response.blob();
         return new Promise((resolve, reject) => {
@@ -176,24 +162,8 @@ class _DownloadManager {
     // ── Anime: resolve & cache stream URL ──
 
     async _downloadAnime(item) {
-        const episodeId = item.sourceId || item.localPath || item.episodeOrChapterId;
-        const source = item.source || 'aniwatch';
-
-        await db.updateDownload(item.id, { progress: 20 });
-
-        const streamData = await SearchCoordinator.getAnimeStreamUrl(episodeId, source);
-        if (!streamData || !streamData.url) throw new Error('Could not resolve stream URL');
-
-        await db.updateDownload(item.id, {
-            progress: 80,
-            cachedStreamUrl: streamData.url,
-            streamType: streamData.type || 'hls',
-            quality: streamData.quality || 'auto'
-        });
-
-        // We can't truly download HLS video to IndexedDB (too large), but we
-        // cache the resolved URL so the player doesn't need to re-scrape.
-        await db.updateDownload(item.id, { progress: 100 });
+        // Anime streams (HLS/iframe) cannot be downloaded for offline playback
+        throw new Error('Anime offline download is not supported. Episodes are streamed directly.');
     }
 }
 

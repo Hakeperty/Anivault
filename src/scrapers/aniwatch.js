@@ -199,7 +199,7 @@ export class AniWatchScraper {
 
     // ─── Stream URL (direct mirror only — backend doesn't do streaming) ───
 
-    static async getStreamUrl(episodeId) {
+    static async getStreamUrl(episodeId, audioType = null) {
         try {
             const cleanId = this._extractEpisodeId(episodeId);
             if (!cleanId) return { url: null, quality: 'auto', type: 'hls' };
@@ -220,11 +220,20 @@ export class AniWatchScraper {
                 serversHtml = serversResp.data || '';
             }
 
-            // Try ALL servers in priority order (sub → raw → dub)
-            const serverIds = this._parseAllServers(serversHtml);
-            if (serverIds.length === 0) return { url: null, quality: 'auto', type: 'hls' };
+            // Try ALL servers, filtered by audio type preference
+            const allServers = this._parseAllServers(serversHtml);
+            if (allServers.length === 0) return { url: null, quality: 'auto', type: 'hls' };
 
-            for (const serverId of serverIds) {
+            let servers = allServers;
+            if (audioType) {
+                const preferred = allServers.filter(s => s.type === audioType);
+                const others = allServers.filter(s => s.type !== audioType);
+                servers = [...preferred, ...others];
+            }
+
+            for (const server of servers) {
+                const serverId = server.id;
+                const serverAudioType = server.type;
                 try {
                     const sourcesUrl = `${base}/ajax/v2/episode/sources?id=${encodeURIComponent(serverId)}`;
                     const sourcesResp = await http.get(sourcesUrl, {
@@ -241,19 +250,19 @@ export class AniWatchScraper {
 
                     // Direct m3u8
                     if (link.includes('.m3u8')) {
-                        return { url: link, quality: 'auto', type: 'hls', episodeId: cleanId };
+                        return { url: link, quality: 'auto', type: 'hls', episodeId: cleanId, audioType: serverAudioType };
                     }
 
                     // Direct mp4
                     if (link.includes('.mp4')) {
-                        return { url: link, quality: 'auto', type: 'mp4', episodeId: cleanId };
+                        return { url: link, quality: 'auto', type: 'mp4', episodeId: cleanId, audioType: serverAudioType };
                     }
 
                     // Embed URL → extract m3u8 via getSources API
                     if (link.includes('megacloud') || link.includes('embed')) {
                         const m3u8 = await this._extractMegacloudStream(link);
                         if (m3u8) {
-                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks, embedUrl: link };
+                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks, embedUrl: link, audioType: serverAudioType };
                         }
                     }
 
@@ -263,12 +272,12 @@ export class AniWatchScraper {
                         const m3u8Match = embedHtml.match(/file\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
                             || embedHtml.match(/source\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
                             || embedHtml.match(/["'](https?:\/\/[^"']*\.m3u8[^"']*)/i);
-                        if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId };
+                        if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId, audioType: serverAudioType };
                     } catch {}
 
                     // Last resort: iframe embed
                     if (link.startsWith('http')) {
-                        return { url: link, quality: 'auto', type: 'iframe', episodeId: cleanId };
+                        return { url: link, quality: 'auto', type: 'iframe', episodeId: cleanId, audioType: serverAudioType };
                     }
                 } catch (e) {
                     console.warn('Server failed:', serverId, e.message);
@@ -477,33 +486,48 @@ export class AniWatchScraper {
     }
 
     static _parseServers(html) {
-        const ids = this._parseAllServers(html);
-        return ids.length > 0 ? ids[0] : null;
+        const servers = this._parseAllServers(html);
+        return servers.length > 0 ? servers[0].id : null;
     }
 
+    /**
+     * Parse all server entries from the servers HTML, returning typed objects.
+     * @returns {Array<{id: string, type: string}>} — type is 'sub', 'dub', or 'raw'
+     */
     static _parseAllServers(html) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-        const ids = [];
-        // Priority: sub → raw → dub → any
-        const groups = [
-            '.servers-sub .server-item[data-id]',
-            '.servers-raw .server-item[data-id]',
-            '.servers-dub .server-item[data-id]',
-            '.server-item[data-id]',
-            '.server-item[data-server-id]'
-        ];
+        const servers = [];
         const seen = new Set();
-        for (const sel of groups) {
+
+        const typeGroups = [
+            { selector: '.servers-sub .server-item[data-id]', type: 'sub' },
+            { selector: '.servers-raw .server-item[data-id]', type: 'raw' },
+            { selector: '.servers-dub .server-item[data-id]', type: 'dub' },
+        ];
+
+        for (const { selector, type } of typeGroups) {
+            for (const s of doc.querySelectorAll(selector)) {
+                const id = s.getAttribute('data-id') || s.getAttribute('data-server-id');
+                if (id && /^\d+$/.test(String(id)) && !seen.has(id)) {
+                    seen.add(id);
+                    servers.push({ id: String(id), type });
+                }
+            }
+        }
+
+        // Fallback: untyped servers default to 'sub'
+        for (const sel of ['.server-item[data-id]', '.server-item[data-server-id]']) {
             for (const s of doc.querySelectorAll(sel)) {
                 const id = s.getAttribute('data-id') || s.getAttribute('data-server-id');
                 if (id && /^\d+$/.test(String(id)) && !seen.has(id)) {
                     seen.add(id);
-                    ids.push(String(id));
+                    servers.push({ id: String(id), type: 'sub' });
                 }
             }
         }
-        return ids;
+
+        return servers;
     }
 
     static _extractEpisodeId(value) {
