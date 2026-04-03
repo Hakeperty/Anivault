@@ -1439,6 +1439,69 @@ p {
     text-overflow: ellipsis;
 }
 
+/* Continue Watching (Discover) */
+.discover-continue-card {
+    flex: 0 0 115px;
+    scroll-snap-align: start;
+    cursor: pointer;
+    transition: transform var(--transition-fast);
+}
+
+.discover-continue-card:active {
+    transform: scale(0.95);
+}
+
+.discover-continue-cover {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 0.7;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--bg-tertiary);
+    margin-bottom: 5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.discover-continue-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.discover-continue-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: rgba(255,255,255,0.15);
+}
+
+.discover-continue-progress-fill {
+    height: 100%;
+    background: var(--accent-primary);
+    border-radius: 0 2px 2px 0;
+    transition: width 0.3s ease;
+}
+
+.discover-continue-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.2;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin: 0 0 2px;
+}
+
+.discover-continue-ep {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin: 0;
+}
+
 /* ========== Responsive ========== */
 @media (max-width: 360px) {
     .search-results-grid {

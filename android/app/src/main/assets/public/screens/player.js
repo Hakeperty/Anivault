@@ -246,9 +246,13 @@ export class PlayerScreen {
 
                 const hlsOk = await new Promise((resolve) => {
                     this.hls = new window.Hls({
-                        maxBufferLength: 30,
-                        maxMaxBufferLength: 60,
+                        maxBufferLength: 15,
+                        maxMaxBufferLength: 30,
+                        maxBufferSize: 30 * 1000 * 1000,
+                        startFragPrefetch: true,
                         enableWorker: false,
+                        lowLatencyMode: false,
+                        backBufferLength: 30,
                         loader: this._createFetchLoader(),
                     });
                     this.hls.loadSource(streamUrl);
@@ -544,6 +548,13 @@ export class PlayerScreen {
     }
 
     async _restoreProgress(video) {
+        // If switching audio in-place, use the saved position
+        if (this._pendingSeek && this._pendingSeek > 0) {
+            video.currentTime = this._pendingSeek;
+            this._pendingSeek = null;
+            return;
+        }
+
         const itemId = this.episode.itemId || this.libraryItem?.id;
         const epId = this.episode.id || this.episode.url || '';
         if (!itemId) return;
@@ -587,17 +598,49 @@ export class PlayerScreen {
         const newType = this._audioType === 'dub' ? 'sub' : 'dub';
         this._audioType = newType;
         localStorage.setItem('anivault-audio-pref', newType);
-        showToast(`Switching to ${newType.toUpperCase()}...`, 'info');
 
-        // Re-launch player with new audio type (fresh instance reads from localStorage)
-        this._cleanup();
-        document.dispatchEvent(new CustomEvent('navigateToPlayer', {
-            detail: {
-                libraryItem: this.libraryItem,
-                episode: this.episode,
-                allEpisodes: this.allEpisodes
-            }
-        }));
+        // Update button labels immediately
+        const hlsBtn = document.getElementById('player-audio-toggle');
+        const iframeBtn = document.getElementById('iframe-audio-toggle');
+        const label = newType.toUpperCase();
+        if (hlsBtn) hlsBtn.textContent = label;
+        if (iframeBtn) iframeBtn.textContent = label;
+        showToast(`Switching to ${label}...`, 'info');
+
+        // In-place stream swap — don't recreate entire player
+        const video = document.getElementById('player-video');
+        const iframe = document.getElementById('player-iframe');
+        const loadingEl = document.getElementById('player-loading');
+        const loadingText = loadingEl?.querySelector('p');
+
+        // Save current position
+        const savedTime = video?.currentTime || 0;
+
+        // Destroy existing HLS instance
+        if (this.hls) {
+            this.hls.destroy();
+            this.hls = null;
+        }
+
+        // Reset iframe if it was active
+        if (iframe && iframe.style.display === 'block') {
+            iframe.src = 'about:blank';
+            iframe.style.display = 'none';
+            if (video) video.style.display = '';
+            const controls = document.getElementById('player-controls');
+            if (controls) controls.style.display = '';
+            const iframeBack = document.getElementById('iframe-back-btn');
+            if (iframeBack) iframeBack.style.display = 'none';
+            if (iframeBtn) iframeBtn.style.display = 'none';
+        }
+
+        // Show loading, fetch new stream in-place
+        if (loadingEl) loadingEl.style.display = '';
+        if (loadingText) loadingText.textContent = `Loading ${label} stream…`;
+
+        // Store position for restore after new stream loads
+        this._pendingSeek = savedTime;
+        this._initPlayerOnline(video, iframe, loadingEl, loadingText);
     }
 
     /* ── Skip intro (visible 0:00–1:30) ── */

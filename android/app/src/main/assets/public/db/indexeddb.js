@@ -281,6 +281,27 @@ export class Database {
             totalSize
         };
     }
+
+    /** Get recently accessed progress records across all library items */
+    async getRecentProgress(limit = 20) {
+        const tx = this.db.transaction(['progress'], 'readonly');
+        const store = tx.objectStore('progress');
+        const index = store.index('lastAccessedAt');
+        return new Promise((resolve, reject) => {
+            const results = [];
+            const request = index.openCursor(null, 'prev');
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor && results.length < limit) {
+                    results.push(cursor.value);
+                    cursor.continue();
+                } else {
+                    resolve(results);
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
 }
 
 // Export singleton instance
