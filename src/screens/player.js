@@ -22,6 +22,8 @@ export class PlayerScreen {
         this._skipIntroDismissed = false;
         this._autoPlayTimer = null;
         this._audioType = localStorage.getItem('anivault-audio-pref') || 'sub';
+        this._hasAudioToggle = true; // default visible until stream info says otherwise
+        this._isLandscape = false;
     }
 
     async render() {
@@ -29,7 +31,7 @@ export class PlayerScreen {
         const title = this.libraryItem?.title || 'Unknown';
 
         return `
-            <div class="screen player-screen fullscreen">
+            <div id="player-screen" class="screen player-screen fullscreen">
                 <!-- Loading overlay -->
                 <div id="player-loading" class="player-overlay">
                     <div class="spinner" style="width:40px;height:40px;border-width:4px"></div>
@@ -44,14 +46,16 @@ export class PlayerScreen {
                 </div>
 
                 <!-- Iframe player (for embed streams) -->
-                <iframe id="player-iframe" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#000;z-index:1;" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture"></iframe>
+                <iframe id="player-iframe" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;border:none;background:#000;z-index:1;" allowfullscreen allow="autoplay; encrypted-media; picture-in-picture; fullscreen"></iframe>
 
-                <!-- Iframe floating back button (always visible in iframe mode) -->
+                <!-- Iframe floating controls (always visible in iframe mode) -->
                 <button id="iframe-back-btn" class="iframe-float-back" style="display:none;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="22" height="22"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
-                <!-- Iframe sub/dub toggle (always visible in iframe mode) -->
                 <button id="iframe-audio-toggle" class="iframe-float-audio" style="display:none;">${this._audioType === 'dub' ? 'DUB' : 'SUB'}</button>
+                <button id="iframe-rotate-btn" class="iframe-float-rotate" style="display:none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                </button>
 
                 <!-- Video element -->
                 <video id="player-video" playsinline></video>
@@ -73,6 +77,9 @@ export class PlayerScreen {
                         <span class="player-title">${this._esc(title)}${epNum ? ` — Ep ${epNum}` : ''}</span>
                         <button class="player-ctrl-btn" id="player-audio-toggle" title="Sub/Dub" style="margin-left:auto;font-size:12px;min-width:44px;background:rgba(255,255,255,.15);border-radius:4px;">${this._audioType === 'dub' ? 'DUB' : 'SUB'}</button>
                         <button class="player-ctrl-btn" id="player-speed-btn" title="Playback Speed" style="font-size:13px;min-width:44px;">1x</button>
+                        <button class="player-ctrl-btn" id="player-rotate-btn" title="Rotate" style="font-size:13px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                        </button>
                     </div>
                     <div class="player-controls-center" id="player-center">
                         <button class="player-ctrl-btn" id="player-rw">
@@ -102,6 +109,7 @@ export class PlayerScreen {
         this._injectStyles();
         this._setupBackButtons();
         this._setupAudioToggle();
+        this._setupRotateButton();
         await this._initPlayer();
     }
 
@@ -123,6 +131,7 @@ export class PlayerScreen {
     _cleanup() {
         this._saveProgress(true);
         if (this.progressInterval) clearInterval(this.progressInterval);
+        if (this._progressInterval) clearInterval(this._progressInterval);
         if (this.controlsTimeout) clearTimeout(this.controlsTimeout);
         if (this._autoPlayTimer) clearInterval(this._autoPlayTimer);
         if (this.hls) {
@@ -132,6 +141,12 @@ export class PlayerScreen {
         // Clean up iframe
         const iframe = document.getElementById('player-iframe');
         if (iframe) iframe.src = 'about:blank';
+        // Reset orientation
+        if (this._isLandscape) {
+            this._isLandscape = false;
+            document.getElementById('player-screen')?.classList.remove('player-landscape');
+            try { screen.orientation?.unlock?.(); } catch {}
+        }
     }
 
     deactivate() {
@@ -209,9 +224,8 @@ export class PlayerScreen {
         return null;
     }
 
-    /** Online streaming init (extracted from _initPlayer) */
+    /** Online streaming init — prefers embed player for reliability */
     async _initPlayerOnline(video, iframe, loadingEl, loadingText) {
-        // Re-apply safety timeout for online streaming
         const loadTimeout = setTimeout(() => {
             if (loadingEl.style.display !== 'none') {
                 this._showError('Stream is taking too long. Tap Retry.');
@@ -228,101 +242,116 @@ export class PlayerScreen {
             );
             if (!streamData || !streamData.url) throw new Error('No stream URL found');
 
-            // Iframe embed mode — show embed in full-screen iframe
-            if (streamData.type === 'iframe' && iframe) {
+            // Update sub/dub button visibility based on what's available
+            this._updateAudioToggleVisibility(streamData.availableTypes || []);
+
+            // Strategy 1 (preferred): Iframe embed — most reliable, MegaCloud handles decryption
+            const embedUrl = streamData.embedUrl || (streamData.type === 'iframe' ? streamData.url : null);
+            if (embedUrl && iframe) {
                 clearTimeout(loadTimeout);
-                this._showIframeEmbed(video, iframe, streamData.url, loadingEl);
+                this._showIframeEmbed(video, iframe, embedUrl, loadingEl);
                 return;
             }
 
-            const streamUrl = streamData.url;
-            if (loadingText) loadingText.textContent = 'Loading video…';
+            // Strategy 2: HLS.js with custom fetch loader
+            if (streamData.type === 'hls' || streamData.url.includes('.m3u8')) {
+                const streamUrl = streamData.url;
+                if (loadingText) loadingText.textContent = 'Loading video…';
+                await this._loadHls();
 
-            // Strategy 1: HLS.js with custom fetch loader (CORS bypass via CapacitorHttp)
-            await this._loadHls();
+                if (window.Hls && window.Hls.isSupported()) {
+                    if (loadingText) loadingText.textContent = 'Starting playback…';
 
-            if (window.Hls && window.Hls.isSupported()) {
-                if (loadingText) loadingText.textContent = 'Starting playback…';
+                    const hlsOk = await new Promise((resolve) => {
+                        this.hls = new window.Hls({
+                            maxBufferLength: 15,
+                            maxMaxBufferLength: 30,
+                            maxBufferSize: 30 * 1000 * 1000,
+                            startFragPrefetch: true,
+                            enableWorker: false,
+                            lowLatencyMode: false,
+                            backBufferLength: 30,
+                            loader: this._createFetchLoader(),
+                        });
+                        this.hls.loadSource(streamUrl);
+                        this.hls.attachMedia(video);
 
-                const hlsOk = await new Promise((resolve) => {
-                    this.hls = new window.Hls({
-                        maxBufferLength: 15,
-                        maxMaxBufferLength: 30,
-                        maxBufferSize: 30 * 1000 * 1000,
-                        startFragPrefetch: true,
-                        enableWorker: false,
-                        lowLatencyMode: false,
-                        backBufferLength: 30,
-                        loader: this._createFetchLoader(),
-                    });
-                    this.hls.loadSource(streamUrl);
-                    this.hls.attachMedia(video);
+                        const hlsTimer = setTimeout(() => resolve(false), 20000);
+                        let networkRetried = false;
 
-                    const hlsTimer = setTimeout(() => resolve(false), 20000);
-                    let networkRetried = false;
+                        this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+                            clearTimeout(hlsTimer);
+                            resolve(true);
+                        });
 
-                    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-                        clearTimeout(hlsTimer);
-                        resolve(true);
-                    });
-
-                    this.hls.on(window.Hls.Events.ERROR, (_e, data) => {
-                        if (data.fatal) {
-                            console.error('HLS.js error:', data.type, data.details);
-                            if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
-                                networkRetried = true;
-                                this.hls.startLoad();
-                            } else {
-                                clearTimeout(hlsTimer);
-                                resolve(false);
+                        this.hls.on(window.Hls.Events.ERROR, (_e, data) => {
+                            if (data.fatal) {
+                                console.error('HLS.js error:', data.type, data.details);
+                                if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
+                                    networkRetried = true;
+                                    this.hls.startLoad();
+                                } else {
+                                    clearTimeout(hlsTimer);
+                                    resolve(false);
+                                }
                             }
-                        }
+                        });
                     });
-                });
 
-                if (hlsOk) {
+                    if (hlsOk) {
+                        clearTimeout(loadTimeout);
+                        loadingEl.style.display = 'none';
+                        this._restoreProgress(video);
+                        video.play().catch(() => {});
+                        this._setupControls(video);
+                        this._startProgressSaving(video);
+                        return;
+                    }
+
+                    this.hls.destroy();
+                    this.hls = null;
+                }
+            }
+
+            // Strategy 3: Direct src (mp4 or other)
+            if (streamData.type === 'mp4' || !streamData.url.includes('.m3u8')) {
+                video.src = streamData.url;
+                video.addEventListener('loadedmetadata', () => {
                     clearTimeout(loadTimeout);
                     loadingEl.style.display = 'none';
                     this._restoreProgress(video);
                     video.play().catch(() => {});
-                    this._setupControls(video);
-                    this._startProgressSaving(video);
-                    return;
-                }
+                }, { once: true });
+                video.addEventListener('error', () => {
+                    clearTimeout(loadTimeout);
+                    this._showError('Cannot play this stream. Tap Retry.');
+                }, { once: true });
 
-                // HLS.js failed — clean up
-                this.hls.destroy();
-                this.hls = null;
-            }
-
-            // Strategy 2: Iframe embed fallback (guaranteed to work — MegaCloud has its own player)
-            if (streamData.embedUrl && iframe) {
-                clearTimeout(loadTimeout);
-                if (loadingText) loadingText.textContent = 'Trying embed player…';
-                this._showIframeEmbed(video, iframe, streamData.embedUrl, loadingEl);
+                this._setupControls(video);
+                this._startProgressSaving(video);
                 return;
             }
 
-            // Strategy 3: Direct src assignment (last resort)
-            video.src = streamUrl;
-            video.addEventListener('loadedmetadata', () => {
-                clearTimeout(loadTimeout);
-                loadingEl.style.display = 'none';
-                this._restoreProgress(video);
-                video.play().catch(() => {});
-            }, { once: true });
-            video.addEventListener('error', () => {
-                clearTimeout(loadTimeout);
-                this._showError('Cannot play this stream. Tap Retry.');
-            }, { once: true });
-
-            this._setupControls(video);
-            this._startProgressSaving(video);
+            clearTimeout(loadTimeout);
+            this._showError('No compatible player for this stream.');
         } catch (err) {
             clearTimeout(loadTimeout);
             console.error('Player init failed:', err);
             this._showError(err.message || 'Failed to load stream.');
         }
+    }
+
+    /** Show/hide sub/dub toggle based on available audio types */
+    _updateAudioToggleVisibility(availableTypes) {
+        const hasSub = availableTypes.includes('sub') || availableTypes.includes('raw');
+        const hasDub = availableTypes.includes('dub');
+        const showToggle = hasSub && hasDub;
+
+        const hlsBtn = document.getElementById('player-audio-toggle');
+        const iframeBtn = document.getElementById('iframe-audio-toggle');
+        if (hlsBtn) hlsBtn.style.display = showToggle ? '' : 'none';
+        // iframe button visibility is set in _showIframeEmbed; store flag
+        this._hasAudioToggle = showToggle;
     }
 
     /**
@@ -400,11 +429,14 @@ export class PlayerScreen {
         document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
 
         iframe.style.display = 'block';
-        // Show persistent floating back button (always visible — not auto-hidden)
         const backBtn = document.getElementById('iframe-back-btn');
         if (backBtn) backBtn.style.display = 'flex';
+        // Only show audio toggle if both sub and dub are available
         const audioBtn = document.getElementById('iframe-audio-toggle');
-        if (audioBtn) audioBtn.style.display = 'block';
+        if (audioBtn) audioBtn.style.display = this._hasAudioToggle ? 'block' : 'none';
+        // Show rotate button
+        const rotateBtn = document.getElementById('iframe-rotate-btn');
+        if (rotateBtn) rotateBtn.style.display = 'flex';
         iframe.src = embedUrl;
 
         setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
@@ -607,40 +639,88 @@ export class PlayerScreen {
         if (iframeBtn) iframeBtn.textContent = label;
         showToast(`Switching to ${label}...`, 'info');
 
-        // In-place stream swap — don't recreate entire player
+        // Full cleanup before re-init
         const video = document.getElementById('player-video');
         const iframe = document.getElementById('player-iframe');
         const loadingEl = document.getElementById('player-loading');
         const loadingText = loadingEl?.querySelector('p');
 
-        // Save current position
-        const savedTime = video?.currentTime || 0;
+        // Save current position (from video or just use 0 for iframe)
+        const savedTime = (video && !isNaN(video.currentTime)) ? video.currentTime : 0;
 
-        // Destroy existing HLS instance
+        // Stop progress saving interval
+        if (this._progressInterval) {
+            clearInterval(this._progressInterval);
+            this._progressInterval = null;
+        }
+
+        // Destroy HLS
         if (this.hls) {
             this.hls.destroy();
             this.hls = null;
         }
 
-        // Reset iframe if it was active
-        if (iframe && iframe.style.display === 'block') {
-            iframe.src = 'about:blank';
-            iframe.style.display = 'none';
-            if (video) video.style.display = '';
-            const controls = document.getElementById('player-controls');
-            if (controls) controls.style.display = '';
-            const iframeBack = document.getElementById('iframe-back-btn');
-            if (iframeBack) iframeBack.style.display = 'none';
-            if (iframeBtn) iframeBtn.style.display = 'none';
+        // Reset video
+        if (video) {
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+            video.style.display = '';
         }
 
-        // Show loading, fetch new stream in-place
+        // Reset iframe
+        if (iframe) {
+            iframe.src = 'about:blank';
+            iframe.style.display = 'none';
+        }
+
+        // Hide all floating buttons (they'll be re-shown by _showIframeEmbed or _setupControls)
+        ['iframe-back-btn', 'iframe-audio-toggle', 'iframe-rotate-btn'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+
+        // Show loading
         if (loadingEl) loadingEl.style.display = '';
         if (loadingText) loadingText.textContent = `Loading ${label} stream…`;
 
         // Store position for restore after new stream loads
         this._pendingSeek = savedTime;
         this._initPlayerOnline(video, iframe, loadingEl, loadingText);
+    }
+
+    /* ── Screen rotation toggle ── */
+
+    _setupRotateButton() {
+        const iframeRotateBtn = document.getElementById('iframe-rotate-btn');
+        const hlsRotateBtn = document.getElementById('player-rotate-btn');
+        const handler = () => this._toggleRotation();
+        if (iframeRotateBtn) iframeRotateBtn.addEventListener('click', handler);
+        if (hlsRotateBtn) hlsRotateBtn.addEventListener('click', handler);
+    }
+
+    async _toggleRotation() {
+        this._isLandscape = !this._isLandscape;
+        const playerWrapper = document.getElementById('player-screen');
+        if (!playerWrapper) return;
+
+        if (this._isLandscape) {
+            // Force landscape via CSS transform (works without native plugin)
+            playerWrapper.classList.add('player-landscape');
+            // Try native Screen Orientation API if available
+            try {
+                if (screen.orientation?.lock) {
+                    await screen.orientation.lock('landscape');
+                }
+            } catch { /* fallback to CSS transform */ }
+        } else {
+            playerWrapper.classList.remove('player-landscape');
+            try {
+                if (screen.orientation?.unlock) {
+                    screen.orientation.unlock();
+                }
+            } catch {}
+        }
     }
 
     /* ── Skip intro (visible 0:00–1:30) ── */
@@ -801,13 +881,32 @@ export class PlayerScreen {
             }
             .iframe-float-back:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
             .iframe-float-audio {
-                position:absolute; top:12px; right:12px; z-index:5;
+                position:absolute; top:12px; right:56px; z-index:5;
                 padding:6px 12px; border-radius:4px;
                 background:rgba(0,0,0,0.5); border:none; color:#fff;
                 font-size:12px; font-weight:700; cursor:pointer;
                 backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
             }
             .iframe-float-audio:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
+            .iframe-float-rotate {
+                position:absolute; top:12px; right:12px; z-index:5;
+                width:36px; height:36px; border-radius:50%;
+                background:rgba(0,0,0,0.5); border:none; color:#fff;
+                cursor:pointer; display:flex; align-items:center; justify-content:center;
+                backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+            }
+            .iframe-float-rotate:active { background:rgba(0,0,0,0.7); transform:scale(0.95); }
+            /* Landscape mode via CSS transform (fallback when native orientation API unavailable) */
+            .player-landscape {
+                position:fixed !important; top:0; left:0;
+                width:100vh !important; height:100vw !important;
+                transform:rotate(90deg); transform-origin:top left;
+                margin-left:100vw; z-index:9999;
+            }
+            .player-landscape iframe,
+            .player-landscape video {
+                width:100% !important; height:100% !important;
+            }
         `;
         document.head.appendChild(style);
     }

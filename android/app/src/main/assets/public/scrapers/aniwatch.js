@@ -224,6 +224,9 @@ export class AniWatchScraper {
             const allServers = this._parseAllServers(serversHtml);
             if (allServers.length === 0) return { url: null, quality: 'auto', type: 'hls' };
 
+            // Collect available audio types for UI (sub/dub toggle visibility)
+            const availableTypes = [...new Set(allServers.map(s => s.type))];
+
             let servers = allServers;
             if (audioType) {
                 const preferred = allServers.filter(s => s.type === audioType);
@@ -250,19 +253,19 @@ export class AniWatchScraper {
 
                     // Direct m3u8
                     if (link.includes('.m3u8')) {
-                        return { url: link, quality: 'auto', type: 'hls', episodeId: cleanId, audioType: serverAudioType };
+                        return { url: link, quality: 'auto', type: 'hls', episodeId: cleanId, audioType: serverAudioType, availableTypes };
                     }
 
                     // Direct mp4
                     if (link.includes('.mp4')) {
-                        return { url: link, quality: 'auto', type: 'mp4', episodeId: cleanId, audioType: serverAudioType };
+                        return { url: link, quality: 'auto', type: 'mp4', episodeId: cleanId, audioType: serverAudioType, availableTypes };
                     }
 
                     // Embed URL → extract m3u8 via getSources API
                     if (link.includes('megacloud') || link.includes('embed')) {
                         const m3u8 = await this._extractMegacloudStream(link);
                         if (m3u8) {
-                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks, embedUrl: link, audioType: serverAudioType };
+                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks, embedUrl: link, audioType: serverAudioType, availableTypes };
                         }
                     }
 
@@ -272,19 +275,19 @@ export class AniWatchScraper {
                         const m3u8Match = embedHtml.match(/file\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
                             || embedHtml.match(/source\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
                             || embedHtml.match(/["'](https?:\/\/[^"']*\.m3u8[^"']*)/i);
-                        if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId, audioType: serverAudioType };
+                        if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId, audioType: serverAudioType, availableTypes };
                     } catch {}
 
                     // Last resort: iframe embed
                     if (link.startsWith('http')) {
-                        return { url: link, quality: 'auto', type: 'iframe', episodeId: cleanId, audioType: serverAudioType };
+                        return { url: link, quality: 'auto', type: 'iframe', episodeId: cleanId, audioType: serverAudioType, availableTypes };
                     }
                 } catch (e) {
                     console.warn('Server failed:', serverId, e.message);
                 }
             }
 
-            return { url: null, quality: 'auto', type: 'hls' };
+            return { url: null, quality: 'auto', type: 'hls', availableTypes };
         } catch (error) {
             console.error('AniWatch getStreamUrl error:', error);
             return { url: null, quality: 'auto', type: 'hls' };

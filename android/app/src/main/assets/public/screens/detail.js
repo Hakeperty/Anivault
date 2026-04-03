@@ -145,7 +145,10 @@ export class DetailScreen {
         // Check which episodes are downloaded
         this._markDownloadedEpisodes(container);
 
-        container.innerHTML = this.episodes.map(ep => `
+        // Audio availability banner (populated async)
+        container.innerHTML = `
+            <div id="audio-type-banner" class="audio-type-banner" style="display:none;"></div>
+        ` + this.episodes.map(ep => `
             <div class="content-item" data-episode="${ep.episode || ep.number}" data-url="${ep.url || ''}">
                 <div class="content-item-number">${ep.episode || ep.number}</div>
                 <div class="content-item-info">
@@ -174,6 +177,35 @@ export class DetailScreen {
                 }
             });
         });
+
+        // Async: check audio availability from first episode
+        this._checkAudioAvailability();
+    }
+
+    async _checkAudioAvailability() {
+        try {
+            const firstEp = this.episodes[0];
+            if (!firstEp) return;
+            const epId = firstEp.episodeId || firstEp.id || firstEp.url;
+            const source = firstEp.source || this.item.source || this.source || 'aniwatch';
+            // Quick stream check — we only need availableTypes from the response
+            const streamData = await SearchCoordinator.getAnimeStreamUrl(epId, source, null);
+            const types = streamData?.availableTypes || [];
+            const banner = document.getElementById('audio-type-banner');
+            if (!banner || types.length === 0) return;
+
+            const hasSub = types.includes('sub') || types.includes('raw');
+            const hasDub = types.includes('dub');
+            let badges = '';
+            if (hasSub) badges += '<span class="audio-badge audio-badge-sub">SUB</span>';
+            if (hasDub) badges += '<span class="audio-badge audio-badge-dub">DUB</span>';
+            if (badges) {
+                banner.innerHTML = badges;
+                banner.style.display = '';
+            }
+        } catch {
+            // Non-critical — silently fail
+        }
     }
 
     renderChapters(container) {
