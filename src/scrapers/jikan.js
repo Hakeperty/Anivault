@@ -24,6 +24,48 @@ export class JikanScraper {
     }
 
     /**
+     * Get top airing anime
+     */
+    static async getTopAiring(limit = 20) {
+        try {
+            const url = `${JIKAN_API}/top/anime?filter=airing&limit=${limit}&sfw=true`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('Jikan top airing error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get most popular anime (by score)
+     */
+    static async getTopPopular(limit = 20) {
+        try {
+            const url = `${JIKAN_API}/top/anime?filter=bypopularity&limit=${limit}&sfw=true`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('Jikan top popular error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get upcoming anime
+     */
+    static async getUpcoming(limit = 15) {
+        try {
+            const url = `${JIKAN_API}/top/anime?filter=upcoming&limit=${limit}&sfw=true`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('Jikan upcoming error:', error);
+            return [];
+        }
+    }
+
+    /**
      * Parse search results from Jikan API
      */
     static parseSearchResults(data) {

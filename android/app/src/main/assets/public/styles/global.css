@@ -87,9 +87,10 @@ body {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: 3px;
     transition: color 0.2s ease;
-    font-size: 11px;
+    font-size: 10px;
+    padding: 0 2px;
 }
 
 .nav-btn.active {
@@ -106,7 +107,7 @@ body {
 }
 
 .nav-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 500;
 }
 
@@ -1268,6 +1269,174 @@ p {
 .library-item .cover-wrapper,
 .continue-item .cover-wrapper {
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* ========== Discover Screen ========== */
+.discover-screen {
+    display: flex;
+    flex-direction: column;
+}
+
+.discover-screen .screen-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.discover-refresh-btn {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all var(--transition-fast);
+}
+
+.discover-refresh-btn:active {
+    transform: rotate(180deg);
+    background: var(--accent-primary);
+    color: #000;
+}
+
+.discover-content {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 8px;
+}
+
+.discover-loading,
+.discover-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 80px 24px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    text-align: center;
+}
+
+.discover-section {
+    padding: 16px 0 8px;
+}
+
+.discover-section-title {
+    font-size: 16px;
+    font-weight: 700;
+    padding: 0 16px 10px;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.discover-row {
+    display: flex;
+    gap: 10px;
+    padding: 0 16px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+
+.discover-row::-webkit-scrollbar {
+    display: none;
+}
+
+.discover-card {
+    flex: 0 0 120px;
+    scroll-snap-align: start;
+    cursor: pointer;
+    animation: cardFadeUp 0.35s cubic-bezier(.4,0,.2,1) both;
+    transition: transform var(--transition-fast);
+}
+
+.discover-card:active {
+    transform: scale(0.95);
+}
+
+.discover-card-cover {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 0.7;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--bg-tertiary);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    margin-bottom: 6px;
+}
+
+.discover-card-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.35s cubic-bezier(.4,0,.2,1);
+}
+
+.discover-card-cover img.loaded {
+    opacity: 1;
+}
+
+.discover-score {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: rgba(0,0,0,0.75);
+    color: #ffd700;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 4px;
+    backdrop-filter: blur(4px);
+}
+
+.discover-type-pill {
+    position: absolute;
+    bottom: 5px;
+    left: 5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.discover-type-pill.anime {
+    background: rgba(74, 125, 255, 0.9);
+    color: white;
+}
+
+.discover-type-pill.manga {
+    background: rgba(224, 64, 251, 0.9);
+    color: white;
+}
+
+.discover-card-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.25;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin: 0 0 2px;
+}
+
+.discover-card-genre {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ========== Responsive ========== */

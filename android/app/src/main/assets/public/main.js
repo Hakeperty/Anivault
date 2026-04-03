@@ -10,6 +10,7 @@ import { LibraryScreen } from './screens/library.js';
 import { SearchScreen } from './screens/search.js';
 import { DownloadsScreen } from './screens/downloads.js';
 import { SettingsScreen } from './screens/settings.js';
+import { DiscoverScreen } from './screens/discover.js';
 import { DetailScreen } from './screens/detail.js';
 import { PlayerScreen } from './screens/player.js';
 import { ReaderScreen } from './screens/reader.js';
@@ -107,6 +108,13 @@ class AniVaultApp {
             let screen;
 
             switch (screenName) {
+                case 'discover':
+                    if (!this.screenInstances.discover) {
+                        this.screenInstances.discover = new DiscoverScreen();
+                    }
+                    screen = this.screenInstances.discover;
+                    break;
+
                 case 'library':
                     if (!this.screenInstances.library) {
                         this.screenInstances.library = new LibraryScreen();

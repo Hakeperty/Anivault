@@ -173,6 +173,51 @@ export class MangaDexScraper {
     }
 
     /**
+     * Get popular/trending manga (ordered by followed count)
+     */
+    static async getPopular(limit = 20) {
+        try {
+            const params = new URLSearchParams();
+            params.set('limit', String(limit));
+            params.append('includes[]', 'cover_art');
+            params.append('contentRating[]', 'safe');
+            params.append('contentRating[]', 'suggestive');
+            params.set('order[followedCount]', 'desc');
+            params.set('hasAvailableChapters', 'true');
+
+            const url = `${MANGADEX_API}/manga?${params.toString()}`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('MangaDex popular error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get recently updated manga
+     */
+    static async getRecentlyUpdated(limit = 15) {
+        try {
+            const params = new URLSearchParams();
+            params.set('limit', String(limit));
+            params.append('includes[]', 'cover_art');
+            params.append('contentRating[]', 'safe');
+            params.append('contentRating[]', 'suggestive');
+            params.set('order[latestUploadedChapter]', 'desc');
+            params.set('hasAvailableChapters', 'true');
+            params.append('availableTranslatedLanguage[]', 'en');
+
+            const url = `${MANGADEX_API}/manga?${params.toString()}`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('MangaDex recent error:', error);
+            return [];
+        }
+    }
+
+    /**
      * Get manga details
      */
     static async getDetails(mangaId) {

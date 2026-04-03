@@ -9,6 +9,7 @@
 import { AniWatchScraper } from './aniwatch.js';
 import { MangaDexScraper } from './mangadex.js';
 import { MangaKatanaScraper } from './mangakatana.js';
+import { JikanScraper } from './jikan.js';
 
 export class SearchCoordinator {
     /**
@@ -167,6 +168,25 @@ export class SearchCoordinator {
             console.error('Failed to get stream URL:', error);
             return null;
         }
+    }
+
+    /** Get trending/popular content for the Discover screen */
+    static async getTrending() {
+        const [airing, popular, upcoming, mangaPopular, mangaRecent] = await Promise.allSettled([
+            JikanScraper.getTopAiring(20),
+            JikanScraper.getTopPopular(20),
+            JikanScraper.getUpcoming(15),
+            MangaDexScraper.getPopular(20),
+            MangaDexScraper.getRecentlyUpdated(15)
+        ]);
+
+        return {
+            airing: airing.status === 'fulfilled' ? airing.value : [],
+            popular: popular.status === 'fulfilled' ? popular.value : [],
+            upcoming: upcoming.status === 'fulfilled' ? upcoming.value : [],
+            mangaPopular: mangaPopular.status === 'fulfilled' ? mangaPopular.value : [],
+            mangaRecent: mangaRecent.status === 'fulfilled' ? mangaRecent.value : []
+        };
     }
 
     /** Remove duplicate titles — first occurrence wins (primary sources added first) */
