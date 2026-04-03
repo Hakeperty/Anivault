@@ -249,7 +249,15 @@ export class AniWatchScraper {
                         return { url: link, quality: 'auto', type: 'mp4', episodeId: cleanId };
                     }
 
-                    // Try extracting m3u8 from embed page
+                    // Embed URL → extract m3u8 via getSources API
+                    if (link.includes('megacloud') || link.includes('embed')) {
+                        const m3u8 = await this._extractMegacloudStream(link);
+                        if (m3u8) {
+                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks };
+                        }
+                    }
+
+                    // Fallback: try scraping embed HTML for m3u8 refs
                     try {
                         const embedHtml = await http.getHTML(link, { 'Referer': `${base}/` });
                         const m3u8Match = embedHtml.match(/file\s*[:=]\s*["']([^"']*\.m3u8[^"']*)/i)
@@ -258,7 +266,7 @@ export class AniWatchScraper {
                         if (m3u8Match) return { url: m3u8Match[1], quality: 'auto', type: 'hls', episodeId: cleanId };
                     } catch {}
 
-                    // Return embed URL as iframe type — player will show it in an iframe
+                    // Last resort: iframe embed
                     if (link.startsWith('http')) {
                         return { url: link, quality: 'auto', type: 'iframe', episodeId: cleanId };
                     }
@@ -271,6 +279,70 @@ export class AniWatchScraper {
         } catch (error) {
             console.error('AniWatch getStreamUrl error:', error);
             return { url: null, quality: 'auto', type: 'hls' };
+        }
+    }
+
+    /**
+     * Extract actual m3u8 stream URL from megacloud embed.
+     * 1. Fetch embed page with ?_debug=true to get the client key
+     * 2. Call getSources endpoint with client key to get unencrypted sources
+     */
+    static async _extractMegacloudStream(embedUrl) {
+        try {
+            const url = new URL(embedUrl);
+            const debugUrl = `${url.origin}${url.pathname}${url.search ? url.search + '&' : '?'}_debug=true`;
+
+            const embedHtml = await http.getHTML(debugUrl, {
+                'Referer': 'https://aniwatchtv.to/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            });
+
+            // Extract client key: 48-char alphanumeric token
+            const keyMatch = embedHtml.match(/[a-zA-Z0-9]{48}/);
+            if (!keyMatch) {
+                console.warn('[MegaCloud] No client key found in embed page');
+                return null;
+            }
+            const clientKey = keyMatch[0];
+
+            // Build getSources URL: same path prefix + /getSources?id=<videoId>&_k=<clientKey>
+            const pathParts = url.pathname.split('/').filter(Boolean);
+            const videoId = pathParts.pop();
+            const basePath = '/' + pathParts.join('/');
+            const sourcesUrl = `${url.origin}${basePath}/getSources?id=${videoId}&_k=${clientKey}`;
+
+            const sourcesResp = await http.get(sourcesUrl, {
+                'Referer': embedUrl,
+                'X-Requested-With': 'XMLHttpRequest',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            });
+
+            let data = {};
+            try { data = sourcesResp.json || JSON.parse(sourcesResp.data); } catch {}
+
+            // If sources is encrypted (string), we can't decrypt client-side
+            if (typeof data.sources === 'string') {
+                console.warn('[MegaCloud] Sources are encrypted, cannot extract');
+                return null;
+            }
+
+            // Unencrypted sources array
+            if (Array.isArray(data.sources) && data.sources.length > 0) {
+                const src = data.sources[0];
+                const fileUrl = src.file || src.url || '';
+                if (fileUrl.includes('.m3u8') || fileUrl.includes('.mp4')) {
+                    console.log('[MegaCloud] Extracted stream:', fileUrl.substring(0, 80) + '...');
+                    return {
+                        url: fileUrl,
+                        tracks: Array.isArray(data.tracks) ? data.tracks : []
+                    };
+                }
+            }
+
+            return null;
+        } catch (e) {
+            console.warn('[MegaCloud] Extraction failed:', e.message);
+            return null;
         }
     }
 

@@ -13,10 +13,15 @@ class HttpClient {
         if (this._pluginChecked) return this._plugin;
         this._pluginChecked = true;
         try {
-            // @capacitor-community/http registers as 'Http' in Capacitor.Plugins
-            if (window.Capacitor?.Plugins?.Http) {
+            // Capacitor 5 built-in CapacitorHttp (enabled via config)
+            if (window.Capacitor?.Plugins?.CapacitorHttp) {
+                this._plugin = window.Capacitor.Plugins.CapacitorHttp;
+                console.log('[HTTP] Using Capacitor 5 built-in HTTP plugin');
+            }
+            // @capacitor-community/http fallback
+            else if (window.Capacitor?.Plugins?.Http) {
                 this._plugin = window.Capacitor.Plugins.Http;
-                console.log('[HTTP] Using Capacitor native HTTP plugin');
+                console.log('[HTTP] Using Capacitor community HTTP plugin');
             }
         } catch (e) {
             console.warn('[HTTP] Capacitor Http plugin not available, using fetch');
