@@ -5,14 +5,9 @@
  * a "downloadedPages" field on the download record so the reader can show
  * them offline.
  *
- * Anime episodes: resolves HLS stream → parses m3u8 → downloads all .ts
- * segments → concatenates into a single video blob → stores as base64 data
- * URL in IndexedDB for offline playback.
- *
- * CDN downloads use an unpatched browser fetch (from a hidden iframe) to go
- * through Chrome's real HTTP engine instead of CapacitorHttp's native layer.
- * CDN anti-bot protection (TLS fingerprinting) blocks native HTTP but allows
- * Chrome's engine.
+ * Anime episodes: uses native CDNDownloader plugin (hidden WebView on
+ * megacloud.blog origin) to fetch HLS segments through Chrome's real engine,
+ * bypassing both TLS fingerprint blocking and CORS origin restrictions.
  */
 
 import { db } from '../db/indexeddb.js';
@@ -26,8 +21,8 @@ class _DownloadManager {
         this._timer = null;
         this._currentId = null;
         this._aborted = false;
-        this._browserFetch = null;
-        this._fetchIframe = null;
+        this._cdnPlugin = null;
+        this._cdnReady = false;
     }
 
     start() {
@@ -221,7 +216,7 @@ class _DownloadManager {
         if (segments.length === 0) throw new Error('No video segments found in playlist');
         console.log(`[DL] Found ${segments.length} segments to download`);
 
-        // 5. Download segments using unpatched browser fetch (Chrome engine)
+        // 5. Download segments via CDN plugin (hidden WebView on megacloud.blog)
         const chunks = [];
         let totalBytes = 0;
         let failedCount = 0;
@@ -278,86 +273,73 @@ class _DownloadManager {
     // ── Shared helpers ──
 
     /**
-     * Get an unpatched browser fetch from a hidden iframe.
-     * CapacitorHttp.enabled patches window.fetch to go through Android's native
-     * HTTP (HttpURLConnection/OkHttp). CDN anti-bot systems detect the native
-     * TLS fingerprint and return 403.
-     *
-     * The iframe's contentWindow.fetch is NOT patched and goes through Chrome's
-     * real browser engine — proper TLS fingerprint, HTTP/2, etc.
+     * Initialize the native CDNDownloader plugin (hidden WebView on megacloud.blog).
+     * Must be called before downloading anime segments.
      */
-    _getBrowserFetch() {
-        if (this._browserFetch) return this._browserFetch;
+    async _ensureCDNPlugin() {
+        if (this._cdnReady) return true;
         try {
-            const iframe = document.createElement('iframe');
-            iframe.style.cssText = 'display:none;width:0;height:0;position:absolute;';
-            iframe.src = 'about:blank';
-            document.body.appendChild(iframe);
-            if (iframe.contentWindow && iframe.contentWindow.fetch) {
-                this._browserFetch = iframe.contentWindow.fetch.bind(iframe.contentWindow);
-                this._fetchIframe = iframe;
-                console.log('[DL] Got unpatched browser fetch from iframe');
+            this._cdnPlugin = window.Capacitor?.Plugins?.CDNDownloader || null;
+            if (!this._cdnPlugin) {
+                console.warn('[DL] CDNDownloader plugin not available');
+                return false;
             }
+            console.log('[DL] Initializing CDN downloader (hidden WebView)...');
+            await this._cdnPlugin.init({ originUrl: 'https://megacloud.blog/' });
+            this._cdnReady = true;
+            console.log('[DL] CDN downloader ready');
+            return true;
         } catch (e) {
-            console.warn('[DL] Could not get browser fetch:', e.message);
+            console.warn('[DL] CDN plugin init failed:', e.message || e);
+            return false;
         }
-        return this._browserFetch;
     }
 
-    /** Fetch text (m3u8 playlists) — tries unpatched browser fetch first, falls back to patched */
+    /** Fetch text (m3u8 playlists) via CDN plugin or fallback to patched fetch */
     async _fetchText(url) {
-        // Strategy 1: Unpatched browser fetch (Chrome engine — bypasses CDN bot detection)
-        const browserFetch = this._getBrowserFetch();
-        if (browserFetch) {
+        // Strategy 1: Native CDN plugin (hidden WebView with megacloud.blog origin)
+        if (await this._ensureCDNPlugin()) {
             try {
-                const resp = await browserFetch(url, { mode: 'cors', credentials: 'omit' });
-                if (resp.ok) {
-                    console.log('[DL] Browser fetch OK for', url.substring(0, 60));
-                    return resp.text();
+                const result = await this._cdnPlugin.fetchText({ url });
+                if (result && result.text) {
+                    console.log('[DL] CDN plugin fetched text OK:', url.substring(0, 60));
+                    return result.text;
                 }
-                console.warn('[DL] Browser fetch status:', resp.status);
             } catch (e) {
-                console.warn('[DL] Browser fetch failed:', e.message);
+                console.warn('[DL] CDN plugin fetchText failed:', e.message || e);
             }
         }
 
         // Strategy 2: Patched fetch (CapacitorHttp native — works for non-CDN URLs)
-        console.log('[DL] Trying patched fetch for', url.substring(0, 60));
+        console.log('[DL] Fallback to patched fetch for:', url.substring(0, 60));
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
         return resp.text();
     }
 
-    /** Fetch a binary segment — tries unpatched browser fetch first */
+    /** Fetch a binary segment via CDN plugin (with retry) */
     async _fetchSegment(url, retries = 2) {
-        const browserFetch = this._getBrowserFetch();
-
         for (let attempt = 0; attempt <= retries; attempt++) {
-            // Strategy 1: Unpatched browser fetch
-            if (browserFetch) {
+            // Strategy 1: Native CDN plugin
+            if (this._cdnReady && this._cdnPlugin) {
                 try {
-                    const resp = await browserFetch(url, { mode: 'cors', credentials: 'omit' });
-                    if (resp.ok) return resp.arrayBuffer();
-                    if (resp.status === 403 && attempt < retries) {
+                    const result = await this._cdnPlugin.fetchSegment({ url });
+                    if (result && result.data) {
+                        return this._dataUrlToArrayBuffer(result.data);
+                    }
+                } catch (e) {
+                    const msg = e.message || e || '';
+                    if (msg.includes('403') && attempt < retries) {
                         await new Promise(r => setTimeout(r, 500 + attempt * 500));
                         continue;
                     }
-                    // If browser fetch gets non-403 error, try patched fetch
-                    if (resp.status !== 403) break;
-                    throw new Error(`HTTP ${resp.status}`);
-                } catch (e) {
-                    // CORS or network error — fall through to patched fetch
-                    if (e.message?.includes('Failed to fetch') || e.name === 'TypeError') {
-                        console.warn('[DL] Browser fetch CORS blocked, trying patched fetch');
-                        break;
-                    }
-                    if (attempt >= retries) throw e;
+                    if (attempt >= retries) throw new Error(msg);
                     await new Promise(r => setTimeout(r, 500));
                     continue;
                 }
             }
 
-            // Strategy 2: Patched fetch (CapacitorHttp native)
+            // Strategy 2: Patched fetch fallback
             try {
                 const resp = await fetch(url);
                 if (resp.ok) return resp.arrayBuffer();
@@ -370,23 +352,23 @@ class _DownloadManager {
         throw new Error('All download strategies failed');
     }
 
+    /** Convert a data:...;base64,... URL to ArrayBuffer */
+    _dataUrlToArrayBuffer(dataUrl) {
+        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+    }
+
     async _fetchAsDataUrl(url) {
-        // For manga pages — try browser fetch first, then patched fetch
-        const browserFetch = this._getBrowserFetch();
-        if (browserFetch) {
+        // For manga pages — try CDN plugin first, then patched fetch
+        if (await this._ensureCDNPlugin()) {
             try {
-                const resp = await browserFetch(url, { mode: 'cors', credentials: 'omit' });
-                if (resp.ok) {
-                    const blob = await resp.blob();
-                    return new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.onerror = () => reject(reader.error);
-                        reader.readAsDataURL(blob);
-                    });
-                }
+                const result = await this._cdnPlugin.fetchSegment({ url });
+                if (result && result.data) return result.data; // Already a data URL
             } catch (e) {
-                console.warn('[DL] Browser fetch for image failed:', e.message);
+                console.warn('[DL] CDN plugin image fetch failed:', e.message);
             }
         }
 
