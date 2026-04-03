@@ -9,8 +9,10 @@
  * segments → concatenates into a single video blob → stores as base64 data
  * URL in IndexedDB for offline playback.
  *
- * Uses native CapacitorHttp plugin directly for CDN downloads (bypasses
- * fetch patch which silently drops headers, causing 403 from CDNs).
+ * CDN downloads use an unpatched browser fetch (from a hidden iframe) to go
+ * through Chrome's real HTTP engine instead of CapacitorHttp's native layer.
+ * CDN anti-bot protection (TLS fingerprinting) blocks native HTTP but allows
+ * Chrome's engine.
  */
 
 import { db } from '../db/indexeddb.js';
@@ -24,7 +26,8 @@ class _DownloadManager {
         this._timer = null;
         this._currentId = null;
         this._aborted = false;
-        this._plugin = undefined;
+        this._browserFetch = null;
+        this._fetchIframe = null;
     }
 
     start() {
@@ -172,7 +175,7 @@ class _DownloadManager {
         const m3u8Url = streamData.url;
 
         // 2. Fetch master m3u8
-        const m3u8Text = await this._fetchText(m3u8Url, 'https://megacloud.blog/');
+        const m3u8Text = await this._fetchText(m3u8Url);
         if (this._aborted) throw new Error('Cancelled');
 
         // 3. Parse — if master playlist, pick a quality; if media playlist, use directly
@@ -180,7 +183,6 @@ class _DownloadManager {
         let mediaText = m3u8Text;
 
         if (m3u8Text.includes('#EXT-X-STREAM-INF')) {
-            // Master playlist — pick lowest bandwidth for smaller download
             const lines = m3u8Text.split('\n');
             let bestLine = null;
             let bestBw = Infinity;
@@ -199,7 +201,7 @@ class _DownloadManager {
             }
             if (bestLine) {
                 mediaUrl = new URL(bestLine, m3u8Url).href;
-                mediaText = await this._fetchText(mediaUrl, m3u8Url);
+                mediaText = await this._fetchText(mediaUrl);
             }
         }
 
@@ -219,8 +221,7 @@ class _DownloadManager {
         if (segments.length === 0) throw new Error('No video segments found in playlist');
         console.log(`[DL] Found ${segments.length} segments to download`);
 
-        // 5. Download all segments using native HTTP plugin (bypasses fetch patch)
-        const segReferer = mediaUrl; // Use the m3u8 playlist URL as referer for segments
+        // 5. Download segments using unpatched browser fetch (Chrome engine)
         const chunks = [];
         let totalBytes = 0;
         let failedCount = 0;
@@ -228,10 +229,10 @@ class _DownloadManager {
             if (this._aborted) throw new Error('Cancelled');
 
             try {
-                const buf = await this._fetchSegment(segments[i], segReferer);
+                const buf = await this._fetchSegment(segments[i]);
                 chunks.push(buf);
                 totalBytes += buf.byteLength;
-                failedCount = 0; // Reset consecutive failure counter
+                failedCount = 0;
             } catch (e) {
                 failedCount++;
                 console.warn(`[DL] segment ${i + 1}/${segments.length} failed:`, e.message);
@@ -240,7 +241,7 @@ class _DownloadManager {
                 }
             }
 
-            // Small delay between segments to avoid CDN rate-limiting
+            // Small delay between segments
             if (i < segments.length - 1) {
                 await new Promise(r => setTimeout(r, 50));
             }
@@ -276,116 +277,120 @@ class _DownloadManager {
 
     // ── Shared helpers ──
 
-    /** Get the native Capacitor HTTP plugin (bypasses fetch patch) */
-    _getNativePlugin() {
-        if (this._plugin !== undefined) return this._plugin;
+    /**
+     * Get an unpatched browser fetch from a hidden iframe.
+     * CapacitorHttp.enabled patches window.fetch to go through Android's native
+     * HTTP (HttpURLConnection/OkHttp). CDN anti-bot systems detect the native
+     * TLS fingerprint and return 403.
+     *
+     * The iframe's contentWindow.fetch is NOT patched and goes through Chrome's
+     * real browser engine — proper TLS fingerprint, HTTP/2, etc.
+     */
+    _getBrowserFetch() {
+        if (this._browserFetch) return this._browserFetch;
         try {
-            this._plugin = window.Capacitor?.Plugins?.CapacitorHttp ||
-                           window.Capacitor?.Plugins?.Http ||
-                           null;
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'display:none;width:0;height:0;position:absolute;';
+            iframe.src = 'about:blank';
+            document.body.appendChild(iframe);
+            if (iframe.contentWindow && iframe.contentWindow.fetch) {
+                this._browserFetch = iframe.contentWindow.fetch.bind(iframe.contentWindow);
+                this._fetchIframe = iframe;
+                console.log('[DL] Got unpatched browser fetch from iframe');
+            }
         } catch (e) {
-            this._plugin = null;
+            console.warn('[DL] Could not get browser fetch:', e.message);
         }
-        return this._plugin;
+        return this._browserFetch;
     }
 
-    /** Standard CDN headers */
-    _streamHeaders(referer) {
-        return {
-            'Referer': referer || 'https://megacloud.blog/',
-            'Origin': 'https://megacloud.blog',
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-        };
-    }
-
-    /** Fetch text content using native plugin or fetch fallback */
-    async _fetchText(url, referer) {
-        const plugin = this._getNativePlugin();
-        if (plugin) {
+    /** Fetch text (m3u8 playlists) — tries unpatched browser fetch first, falls back to patched */
+    async _fetchText(url) {
+        // Strategy 1: Unpatched browser fetch (Chrome engine — bypasses CDN bot detection)
+        const browserFetch = this._getBrowserFetch();
+        if (browserFetch) {
             try {
-                const resp = await plugin.request({
-                    method: 'GET', url,
-                    headers: this._streamHeaders(referer),
-                });
-                if (resp.status >= 200 && resp.status < 300) {
-                    return typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+                const resp = await browserFetch(url, { mode: 'cors', credentials: 'omit' });
+                if (resp.ok) {
+                    console.log('[DL] Browser fetch OK for', url.substring(0, 60));
+                    return resp.text();
                 }
-                throw new Error(`HTTP ${resp.status} fetching ${url}`);
+                console.warn('[DL] Browser fetch status:', resp.status);
             } catch (e) {
-                console.warn('[DL] native _fetchText failed, trying fetch:', e.message);
+                console.warn('[DL] Browser fetch failed:', e.message);
             }
         }
-        const resp = await fetch(url, { headers: this._streamHeaders(referer) });
+
+        // Strategy 2: Patched fetch (CapacitorHttp native — works for non-CDN URLs)
+        console.log('[DL] Trying patched fetch for', url.substring(0, 60));
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
         return resp.text();
     }
 
-    /** Convert base64 string to ArrayBuffer */
-    _base64ToArrayBuffer(base64) {
-        // The native plugin may return data with data-url prefix or raw base64
-        const raw = base64.includes(',') ? base64.split(',')[1] : base64;
-        const binary = atob(raw);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return bytes.buffer;
-    }
+    /** Fetch a binary segment — tries unpatched browser fetch first */
+    async _fetchSegment(url, retries = 2) {
+        const browserFetch = this._getBrowserFetch();
 
-    /** Fetch a binary segment using native plugin (with retry) */
-    async _fetchSegment(url, referer, retries = 2) {
         for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                const plugin = this._getNativePlugin();
-                if (plugin) {
-                    const resp = await plugin.request({
-                        method: 'GET', url,
-                        headers: this._streamHeaders(referer),
-                        responseType: 'blob', // Returns base64 through native bridge
-                    });
-                    if (resp.status >= 200 && resp.status < 300) {
-                        return this._base64ToArrayBuffer(resp.data);
-                    }
+            // Strategy 1: Unpatched browser fetch
+            if (browserFetch) {
+                try {
+                    const resp = await browserFetch(url, { mode: 'cors', credentials: 'omit' });
+                    if (resp.ok) return resp.arrayBuffer();
                     if (resp.status === 403 && attempt < retries) {
-                        console.warn(`[DL] 403 on attempt ${attempt + 1}, retrying...`);
-                        await new Promise(r => setTimeout(r, 800 + attempt * 800));
+                        await new Promise(r => setTimeout(r, 500 + attempt * 500));
                         continue;
                     }
+                    // If browser fetch gets non-403 error, try patched fetch
+                    if (resp.status !== 403) break;
                     throw new Error(`HTTP ${resp.status}`);
+                } catch (e) {
+                    // CORS or network error — fall through to patched fetch
+                    if (e.message?.includes('Failed to fetch') || e.name === 'TypeError') {
+                        console.warn('[DL] Browser fetch CORS blocked, trying patched fetch');
+                        break;
+                    }
+                    if (attempt >= retries) throw e;
+                    await new Promise(r => setTimeout(r, 500));
+                    continue;
                 }
-                // Fallback: regular fetch
-                const resp = await fetch(url, { headers: this._streamHeaders(referer) });
+            }
+
+            // Strategy 2: Patched fetch (CapacitorHttp native)
+            try {
+                const resp = await fetch(url);
                 if (resp.ok) return resp.arrayBuffer();
                 throw new Error(`HTTP ${resp.status}`);
             } catch (e) {
                 if (attempt >= retries) throw e;
-                await new Promise(r => setTimeout(r, 800));
+                await new Promise(r => setTimeout(r, 500));
             }
         }
+        throw new Error('All download strategies failed');
     }
 
     async _fetchAsDataUrl(url) {
-        const plugin = this._getNativePlugin();
-        if (plugin) {
+        // For manga pages — try browser fetch first, then patched fetch
+        const browserFetch = this._getBrowserFetch();
+        if (browserFetch) {
             try {
-                const resp = await plugin.request({
-                    method: 'GET', url,
-                    headers: {
-                        'Referer': new URL(url).origin + '/',
-                        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-                    },
-                    responseType: 'blob',
-                });
-                if (resp.status >= 200 && resp.status < 300) {
-                    const raw = (resp.data || '').includes(',') ? resp.data.split(',')[1] : resp.data;
-                    // Re-encode as proper data URL with content-type guess
-                    const ct = (resp.headers?.['content-type'] || resp.headers?.['Content-Type'] || 'image/jpeg');
-                    return `data:${ct};base64,${raw}`;
+                const resp = await browserFetch(url, { mode: 'cors', credentials: 'omit' });
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.onerror = () => reject(reader.error);
+                        reader.readAsDataURL(blob);
+                    });
                 }
             } catch (e) {
-                console.warn('[DL] native _fetchAsDataUrl failed, trying fetch:', e.message);
+                console.warn('[DL] Browser fetch for image failed:', e.message);
             }
         }
+
+        // Fallback: patched fetch
         const response = await fetch(url, {
             headers: { 'Referer': new URL(url).origin + '/' }
         });
