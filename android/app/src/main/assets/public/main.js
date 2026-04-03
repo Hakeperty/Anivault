@@ -41,8 +41,8 @@ class AniVaultApp {
             this.setupNavigationListeners();
             this.setupDetailNavigation();
 
-            // Load default screen
-            await this.loadScreen('library');
+            // Load default screen (Discover is home)
+            await this.loadScreen('discover');
 
             // Start download manager
             DownloadManager.start();
@@ -236,15 +236,16 @@ class AniVaultApp {
         this.history.pop();
         const previousScreen = this.history[this.history.length - 1];
 
-        if (previousScreen === 'library' || previousScreen === 'search' || 
+        if (previousScreen === 'discover' || previousScreen === 'library' || previousScreen === 'search' || 
             previousScreen === 'downloads' || previousScreen === 'settings') {
-            // Show nav again
             document.getElementById('bottom-nav').style.display = 'flex';
             this.loadScreen(previousScreen);
         } else if (this.history.length > 1) {
             this.goBack();
         } else {
-            this.loadScreen('library');
+            // Always fall back to Discover as home
+            document.getElementById('bottom-nav').style.display = 'flex';
+            this.loadScreen('discover');
         }
     }
 

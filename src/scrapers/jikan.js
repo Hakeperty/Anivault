@@ -66,6 +66,63 @@ export class JikanScraper {
     }
 
     /**
+     * Get current season anime (airing this season with dates/ratings)
+     */
+    static async getSeasonNow(limit = 25) {
+        try {
+            const url = `${JIKAN_API}/seasons/now?limit=${limit}&sfw=true`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('Jikan season now error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Search anime by genre IDs (for recommendation engine)
+     * Genre IDs: 1=Action, 2=Adventure, 4=Comedy, 8=Drama, 10=Fantasy, 22=Romance, 24=Sci-Fi, etc.
+     */
+    static async getByGenres(genreIds = [], limit = 15) {
+        try {
+            if (genreIds.length === 0) return [];
+            const genres = genreIds.slice(0, 3).join(',');
+            const url = `${JIKAN_API}/anime?genres=${genres}&order_by=score&sort=desc&limit=${limit}&sfw=true`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data);
+        } catch (error) {
+            console.error('Jikan genre search error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get anime recommendations for a specific anime
+     */
+    static async getRecommendations(malId) {
+        try {
+            const url = `${JIKAN_API}/anime/${malId}/recommendations`;
+            const data = await http.getJSON(url);
+            return (data.data || []).slice(0, 10).map(rec => {
+                const entry = rec.entry || {};
+                return {
+                    id: `mal-${entry.mal_id}`,
+                    malId: entry.mal_id,
+                    title: entry.title || 'Unknown',
+                    coverImage: entry.images?.jpg?.large_image_url || entry.images?.jpg?.image_url || '',
+                    type: 'anime',
+                    source: 'jikan',
+                    url: entry.url || '',
+                    votes: rec.votes || 0
+                };
+            });
+        } catch (error) {
+            console.error('Jikan recommendations error:', error);
+            return [];
+        }
+    }
+
+    /**
      * Parse search results from Jikan API
      */
     static parseSearchResults(data) {
@@ -84,9 +141,12 @@ export class JikanScraper {
                     url: anime.url || '',
                     episodes: anime.episodes || null,
                     genres: (anime.genres || []).map(g => g.name).filter(Boolean),
+                    genreIds: (anime.genres || []).map(g => g.mal_id).filter(Boolean),
                     score: anime.score || null,
                     status: anime.status || 'Unknown',
-                    year: anime.year || (anime.aired?.prop?.from?.year) || null
+                    year: anime.year || (anime.aired?.prop?.from?.year) || null,
+                    season: anime.season || null,
+                    airedFrom: anime.aired?.from || null
                 });
             } catch (e) {
                 console.debug('Jikan parse error:', e);

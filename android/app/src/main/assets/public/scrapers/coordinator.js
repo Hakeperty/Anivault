@@ -172,10 +172,11 @@ export class SearchCoordinator {
 
     /** Get trending/popular content for the Discover screen */
     static async getTrending() {
-        const [airing, popular, upcoming, mangaPopular, mangaRecent] = await Promise.allSettled([
+        const [airing, popular, upcoming, seasonNow, mangaPopular, mangaRecent] = await Promise.allSettled([
             JikanScraper.getTopAiring(20),
             JikanScraper.getTopPopular(20),
-            JikanScraper.getUpcoming(15),
+            JikanScraper.getUpcoming(20),
+            JikanScraper.getSeasonNow(25),
             MangaDexScraper.getPopular(20),
             MangaDexScraper.getRecentlyUpdated(15)
         ]);
@@ -184,9 +185,52 @@ export class SearchCoordinator {
             airing: airing.status === 'fulfilled' ? airing.value : [],
             popular: popular.status === 'fulfilled' ? popular.value : [],
             upcoming: upcoming.status === 'fulfilled' ? upcoming.value : [],
+            seasonNow: seasonNow.status === 'fulfilled' ? seasonNow.value : [],
             mangaPopular: mangaPopular.status === 'fulfilled' ? mangaPopular.value : [],
             mangaRecent: mangaRecent.status === 'fulfilled' ? mangaRecent.value : []
         };
+    }
+
+    /**
+     * Build personalized recommendations from watch history.
+     * Analyzes genres from library items, fetches similar anime via Jikan.
+     */
+    static async getRecommendations(libraryItems = []) {
+        try {
+            if (libraryItems.length === 0) return [];
+
+            // Collect genre frequencies from watched items
+            const genreCount = {};
+            const genreIdMap = {};
+            const watchedIds = new Set(libraryItems.map(i => i.id));
+
+            for (const item of libraryItems) {
+                if (item.type !== 'anime') continue;
+                for (const g of (item.genres || [])) {
+                    genreCount[g] = (genreCount[g] || 0) + 1;
+                }
+                for (const gid of (item.genreIds || [])) {
+                    genreIdMap[gid] = (genreIdMap[gid] || 0) + 1;
+                }
+            }
+
+            // Get top 3 genre IDs by frequency
+            const topGenreIds = Object.entries(genreIdMap)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([id]) => Number(id));
+
+            if (topGenreIds.length === 0) return [];
+
+            // Fetch genre-based recommendations
+            const results = await JikanScraper.getByGenres(topGenreIds, 20);
+
+            // Filter out already-watched items
+            return results.filter(r => !watchedIds.has(r.id));
+        } catch (error) {
+            console.error('Recommendations error:', error);
+            return [];
+        }
     }
 
     /** Remove duplicate titles — first occurrence wins (primary sources added first) */

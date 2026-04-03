@@ -1,5 +1,5 @@
 /**
- * Discover Screen - Trending anime & popular manga
+ * Discover Screen - Trending anime, seasonal, recommendations & popular manga
  * Fetches from Jikan (MAL) for anime and MangaDex for manga.
  */
 
@@ -7,11 +7,24 @@ import { SearchCoordinator } from '../scrapers/coordinator.js';
 import { showToast } from '../utils/toast.js';
 import { db } from '../db/indexeddb.js';
 
+// Inline SVG section icons (replace emojis)
+const ICONS = {
+    play: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><polygon points="4 2 18 10 4 18"/></svg>',
+    fire: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M10 0C10 0 6 5 6 9a4 4 0 0 0 8 0c0-1.5-.7-3-2-5 2 3 4 5.5 4 8a6 6 0 1 1-12 0C4 7 7 3 10 0z"/></svg>',
+    star: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M10 1l2.39 4.84 5.34.78-3.87 3.77.91 5.33L10 13.27l-4.77 2.51.91-5.33L2.27 6.68l5.34-.78z"/></svg>',
+    seasonal: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M10 2a1 1 0 0 1 1 1v1.07A7 7 0 0 1 17 11a7 7 0 1 1-14 0 7 7 0 0 1 6-6.93V3a1 1 0 0 1 1-1zm0 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm.5 2v3.5l2.5 1.5-.5.87L10 12V8h.5z"/></svg>',
+    book: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M2 3a2 2 0 0 1 2-1h4a2 2 0 0 1 2 1v14l-1-.5-3-1.5-3 1.5-1 .5V3zm8 0a2 2 0 0 1 2-1h4a2 2 0 0 1 2 1v14l-1-.5-3-1.5-3 1.5-1 .5V3z"/></svg>',
+    sparkle: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M10 2l1.5 4.5L16 8l-4.5 1.5L10 14l-1.5-4.5L4 8l4.5-1.5L10 2zM15 12l.75 2.25L18 15l-2.25.75L15 18l-.75-2.25L12 15l2.25-.75z"/></svg>',
+    calendar: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M6 1v2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-2V1h-2v2H8V1H6zm-2 6h12v10H4V7z"/></svg>',
+    recommend: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18"><path d="M2 10.5a8.5 8.5 0 1 1 17 0c0 .28-.01.55-.04.82l-1.98-.17c.02-.22.02-.43.02-.65a6.5 6.5 0 1 0-6.5 6.5c.22 0 .43 0 .65-.02l.17 1.98c-.27.03-.54.04-.82.04A8.5 8.5 0 0 1 2 10.5zm12.5 2l2 3 3-4"/></svg>',
+};
+
 export class DiscoverScreen {
     constructor() {
         this._cache = null;
         this._cacheTime = 0;
         this._loading = false;
+        this._recommendations = null;
     }
 
     async render() {
@@ -39,6 +52,7 @@ export class DiscoverScreen {
     async afterRender() {
         document.getElementById('discover-refresh')?.addEventListener('click', () => {
             this._cache = null;
+            this._recommendations = null;
             this._loadContent();
         });
         this._loadContent();
@@ -52,18 +66,21 @@ export class DiscoverScreen {
 
         // Always fetch fresh continue-watching from DB
         let continueWatching = [];
+        let libraryItems = [];
         try {
-            const library = await db.getLibrary();
-            continueWatching = library
+            libraryItems = await db.getLibrary();
+            continueWatching = libraryItems
                 .filter(item => item.progress && (item.progress.currentEpisode || item.progress.currentChapter))
                 .sort((a, b) => new Date(b.progress.lastUpdated || 0) - new Date(a.progress.lastUpdated || 0))
                 .slice(0, 12);
         } catch (e) { /* ignore */ }
 
-        // Use cache if less than 5 minutes old
-        const CACHE_TTL = 5 * 60 * 1000;
+        // Use cache if less than 10 minutes old
+        const CACHE_TTL = 10 * 60 * 1000;
         if (this._cache && (Date.now() - this._cacheTime < CACHE_TTL)) {
-            container.innerHTML = this._buildContinueWatching(continueWatching) + this._buildSections(this._cache);
+            container.innerHTML = this._buildContinueWatching(continueWatching)
+                + this._buildRecommendations()
+                + this._buildSections(this._cache);
             this._bindCards(container);
             this._bindContinue(container);
             return;
@@ -78,12 +95,22 @@ export class DiscoverScreen {
         this._bindContinue(container);
 
         try {
-            const data = await SearchCoordinator.getTrending();
+            // Fetch trending and recommendations in parallel
+            const [data, recs] = await Promise.all([
+                SearchCoordinator.getTrending(),
+                libraryItems.length > 0
+                    ? SearchCoordinator.getRecommendations(libraryItems)
+                    : Promise.resolve([])
+            ]);
+
             this._cache = data;
             this._cacheTime = Date.now();
+            this._recommendations = recs;
 
             if (!document.getElementById('discover-content')) return;
-            container.innerHTML = this._buildContinueWatching(continueWatching) + this._buildSections(data);
+            container.innerHTML = this._buildContinueWatching(continueWatching)
+                + this._buildRecommendations()
+                + this._buildSections(data);
             this._bindCards(container);
             this._bindContinue(container);
         } catch (err) {
@@ -127,10 +154,19 @@ export class DiscoverScreen {
 
         return `
             <div class="discover-section">
-                <h2 class="discover-section-title">▶️ Continue Watching</h2>
+                <h2 class="discover-section-title"><span class="section-icon play">${ICONS.play}</span>Continue Watching</h2>
                 <div class="discover-row">${cards}</div>
             </div>
         `;
+    }
+
+    _buildRecommendations() {
+        if (!this._recommendations || this._recommendations.length === 0) return '';
+        return this._section(
+            `<span class="section-icon recommend">${ICONS.recommend}</span>Recommended For You`,
+            this._recommendations,
+            'recommended'
+        );
     }
 
     _bindContinue(container) {
@@ -154,29 +190,50 @@ export class DiscoverScreen {
     _getProgress(item) {
         if (item.type === 'anime') {
             const total = item.episodes || 1;
-            return Math.round(((item.progress?.currentEpisode || 0) / total) * 100);
+            return Math.min(100, Math.round(((item.progress?.currentEpisode || 0) / total) * 100));
         }
         const total = item.chapters || 1;
-        return Math.round(((item.progress?.currentChapter || 0) / total) * 100);
+        return Math.min(100, Math.round(((item.progress?.currentChapter || 0) / total) * 100));
     }
 
     _buildSections(data) {
         let html = '';
 
+        if (data.seasonNow?.length) {
+            html += this._section(
+                `<span class="section-icon seasonal">${ICONS.seasonal}</span>This Season`,
+                data.seasonNow, 'season-now'
+            );
+        }
         if (data.airing?.length) {
-            html += this._section('🔥 Top Airing', data.airing, 'airing');
+            html += this._section(
+                `<span class="section-icon fire">${ICONS.fire}</span>Top Airing`,
+                data.airing, 'airing'
+            );
         }
         if (data.popular?.length) {
-            html += this._section('⭐ Most Popular Anime', data.popular, 'popular');
+            html += this._section(
+                `<span class="section-icon star">${ICONS.star}</span>Most Popular`,
+                data.popular, 'popular'
+            );
         }
         if (data.mangaPopular?.length) {
-            html += this._section('📚 Popular Manga', data.mangaPopular, 'manga-pop');
+            html += this._section(
+                `<span class="section-icon book">${ICONS.book}</span>Popular Manga`,
+                data.mangaPopular, 'manga-pop'
+            );
         }
         if (data.mangaRecent?.length) {
-            html += this._section('🆕 Recently Updated Manga', data.mangaRecent, 'manga-new');
+            html += this._section(
+                `<span class="section-icon sparkle">${ICONS.sparkle}</span>Recently Updated Manga`,
+                data.mangaRecent, 'manga-new'
+            );
         }
         if (data.upcoming?.length) {
-            html += this._section('📅 Upcoming Anime', data.upcoming, 'upcoming');
+            html += this._section(
+                `<span class="section-icon calendar">${ICONS.calendar}</span>Upcoming Anime`,
+                data.upcoming, 'upcoming'
+            );
         }
 
         if (!html) {
@@ -187,18 +244,22 @@ export class DiscoverScreen {
     }
 
     _section(title, items, sectionId) {
-        const cards = items.map((item, i) => `
+        const cards = items.map((item, i) => {
+            const yearBadge = item.year ? `<span class="discover-year">${item.year}</span>` : '';
+            return `
             <div class="discover-card" data-id="${item.id}" data-source="${item.source}" data-type="${item.type || 'anime'}" style="animation-delay: ${Math.min(i * 0.03, 0.3)}s">
                 <div class="discover-card-cover">
                     <img src="${item.coverImage || ''}" alt="${this._esc(item.title)}" loading="lazy"
                          onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 140%22><rect fill=%22%231a1a1a%22 width=%22100%22 height=%22140%22/><text x=%2250%22 y=%2270%22 fill=%22%23444%22 text-anchor=%22middle%22 font-size=%2210%22>No Image</text></svg>'">
                     ${item.score ? `<span class="discover-score">★ ${item.score}</span>` : ''}
                     <span class="discover-type-pill ${item.type || 'anime'}">${item.type === 'manga' ? 'Manga' : 'Anime'}</span>
+                    ${yearBadge}
                 </div>
                 <p class="discover-card-title">${this._esc(item.title)}</p>
                 ${item.genres?.length ? `<p class="discover-card-genre">${item.genres.slice(0, 2).join(' · ')}</p>` : ''}
             </div>
-        `).join('');
+            `;
+        }).join('');
 
         return `
             <div class="discover-section" data-section="${sectionId}">
@@ -215,13 +276,14 @@ export class DiscoverScreen {
                 const source = card.dataset.source;
                 const type = card.dataset.type;
 
-                // Find the item in cache
+                // Find the item in cache or recommendations
                 let item = null;
-                if (this._cache) {
-                    for (const list of Object.values(this._cache)) {
-                        item = list.find(r => r.id === id && r.source === source);
-                        if (item) break;
-                    }
+                const allLists = this._cache ? Object.values(this._cache) : [];
+                if (this._recommendations) allLists.push(this._recommendations);
+
+                for (const list of allLists) {
+                    item = list.find(r => r.id === id && r.source === source);
+                    if (item) break;
                 }
                 if (!item) return;
 
@@ -236,6 +298,7 @@ export class DiscoverScreen {
                             source: item.source,
                             url: item.url || '',
                             genres: item.genres || [],
+                            genreIds: item.genreIds || [],
                             episodes: item.episodes || null,
                             chapters: item.chapters || null,
                             score: item.score || null

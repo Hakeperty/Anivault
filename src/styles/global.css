@@ -1357,7 +1357,31 @@ p {
     padding: 0 16px 10px;
     color: var(--text-primary);
     margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
+
+/* Section icon SVGs */
+.section-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+.section-icon svg { width: 14px; height: 14px; }
+.section-icon.play { background: rgba(255, 107, 53, 0.15); color: #FF6B35; }
+.section-icon.fire { background: rgba(255, 69, 58, 0.15); color: #FF453A; }
+.section-icon.star { background: rgba(255, 214, 10, 0.15); color: #FFD60A; }
+.section-icon.seasonal { background: rgba(48, 209, 88, 0.15); color: #30D158; }
+.section-icon.book { background: rgba(191, 90, 242, 0.15); color: #BF5AF2; }
+.section-icon.sparkle { background: rgba(100, 210, 255, 0.15); color: #64D2FF; }
+.section-icon.calendar { background: rgba(255, 159, 10, 0.15); color: #FF9F0A; }
+.section-icon.recommend { background: rgba(50, 215, 75, 0.15); color: #32D74B; }
 
 .discover-row {
     display: flex;
@@ -1441,6 +1465,19 @@ p {
 .discover-type-pill.manga {
     background: rgba(224, 64, 251, 0.9);
     color: white;
+}
+
+.discover-year {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 600;
+    background: rgba(0,0,0,0.7);
+    color: #ccc;
+    backdrop-filter: blur(4px);
 }
 
 .discover-card-title {
