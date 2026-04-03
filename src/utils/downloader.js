@@ -160,14 +160,23 @@ class _DownloadManager {
         const streamData = await SearchCoordinator.getAnimeStreamUrl(episodeId, source);
         if (!streamData || !streamData.url) throw new Error('Could not resolve stream URL');
 
-        // If it's an iframe-only stream, we can't download it
-        if (streamData.type === 'iframe') {
-            throw new Error('This episode uses an embed player and cannot be downloaded for offline viewing.');
+        let m3u8Url = null;
+
+        if (streamData.type === 'iframe' || streamData.type === 'embed') {
+            // Scraper couldn't extract direct m3u8 (sources encrypted).
+            // Use CDN plugin to load the embed page and intercept the m3u8 URL.
+            console.log('[DL] Sources encrypted — resolving via embed page...');
+            await db.updateDownload(item.id, { progress: 3 });
+            m3u8Url = await this._resolveStreamFromEmbed(streamData.url);
+            if (!m3u8Url) throw new Error('Could not extract stream from embed page');
+            console.log('[DL] Resolved m3u8:', m3u8Url.substring(0, 60));
+        } else if (streamData.url.includes('.m3u8') || streamData.type === 'hls') {
+            m3u8Url = streamData.url;
+        } else {
+            throw new Error('Unsupported stream type: ' + streamData.type);
         }
 
         await db.updateDownload(item.id, { progress: 5 });
-
-        const m3u8Url = streamData.url;
 
         // 2. Fetch master m3u8
         const m3u8Text = await this._fetchText(m3u8Url);
@@ -271,6 +280,23 @@ class _DownloadManager {
     }
 
     // ── Shared helpers ──
+
+    /**
+     * Resolve m3u8 URL from an embed page using the native CDN plugin.
+     * The plugin loads the embed in a temporary WebView. The embed page's own
+     * JavaScript handles source decryption and starts HLS.js, which makes
+     * a request for the .m3u8 playlist. shouldInterceptRequest captures it.
+     */
+    async _resolveStreamFromEmbed(embedUrl) {
+        if (!await this._ensureCDNPlugin()) return null;
+        try {
+            const result = await this._cdnPlugin.resolveStream({ embedUrl });
+            return result?.url || null;
+        } catch (e) {
+            console.warn('[DL] resolveStream failed:', e.message || e);
+            return null;
+        }
+    }
 
     /**
      * Initialize the native CDNDownloader plugin (hidden WebView on megacloud.blog).
