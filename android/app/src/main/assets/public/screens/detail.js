@@ -50,6 +50,7 @@ export class DetailScreen {
                             <h1 class="detail-title">${this.item.title}</h1>
                             <div class="detail-badges">
                                 <span class="badge ${type}">${type === 'manga' ? 'Manga' : 'Anime'}</span>
+                                ${this.item.score ? `<span class="badge score-badge">★ ${this.item.score}</span>` : ''}
                                 ${this.source !== 'library' ? `<span class="badge secondary">${this.formatSource(this.item.source || this.source)}</span>` : ''}
                                 ${this.item.episodes ? `<span class="badge secondary">${this.item.episodes} eps</span>` : ''}
                                 ${this.item.chapters ? `<span class="badge secondary">${this.item.chapters} ch</span>` : ''}

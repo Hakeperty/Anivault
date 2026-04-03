@@ -189,6 +189,12 @@ body {
     color: white;
 }
 
+.badge.score-badge {
+    background: linear-gradient(135deg, #FFD700, #FFA000);
+    color: #1a1a1a;
+    font-weight: 700;
+}
+
 .hidden {
     display: none !important;
 }

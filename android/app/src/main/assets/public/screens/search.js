@@ -222,7 +222,8 @@ export class SearchScreen {
                         url: item.url,
                         genres: item.genres || [],
                         chapters: item.chapters || null,
-                        episodes: item.episodes || null
+                        episodes: item.episodes || null,
+                        score: item.score || item.rating || null
                     },
                     source: item.source
                 }

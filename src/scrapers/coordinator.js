@@ -93,15 +93,19 @@ export class SearchCoordinator {
     }
 
     static async getAnimeEpisodes(animeId, animeUrl, source = 'aniwatch', animeTitle = '') {
-        const fromId = this._extractAniwatchSlug(animeId);
-        const fromUrl = this._extractAniwatchSlug(animeUrl);
+        // Skip slug extraction for non-aniwatch sources (e.g. jikan "mal-XXXXX" IDs)
+        const isAniwatch = !source || source === 'aniwatch' || source === 'hianime';
+        const fromId = isAniwatch ? this._extractAniwatchSlug(animeId) : '';
+        const fromUrl = isAniwatch ? this._extractAniwatchSlug(animeUrl) : '';
         const targetSlug = fromId || fromUrl;
 
         try {
             if (targetSlug) {
-                return await AniWatchScraper.getEpisodes(targetSlug);
+                const eps = await AniWatchScraper.getEpisodes(targetSlug);
+                if (eps.length > 0) return eps;
             }
 
+            // Fallback: search AniWatch by title
             if (animeTitle) {
                 const searchResults = await AniWatchScraper.search(animeTitle);
                 const bestMatch = searchResults.find((item) => this._titlesMatch(item?.title, animeTitle)) || searchResults[0];
@@ -110,7 +114,10 @@ export class SearchCoordinator {
                 }
             }
 
-            return await AniWatchScraper.getEpisodes(animeId || animeUrl);
+            if (targetSlug) {
+                return await AniWatchScraper.getEpisodes(animeId || animeUrl);
+            }
+            return [];
         } catch (error) {
             console.error('Failed to get episodes:', error);
             return [];
