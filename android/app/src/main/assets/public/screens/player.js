@@ -141,15 +141,27 @@ export class PlayerScreen {
         loadingEl.style.display = '';
         errorEl.style.display = 'none';
 
+        // Safety timeout — if nothing loads in 25s, show error with retry
+        const loadTimeout = setTimeout(() => {
+            if (loadingEl.style.display !== 'none') {
+                this._showError('Stream is taking too long. Tap Retry.');
+            }
+        }, 25000);
+
         try {
+            // Update loading text
+            const loadingText = loadingEl.querySelector('p');
+            if (loadingText) loadingText.textContent = 'Finding stream…';
+
             const streamData = await SearchCoordinator.getAnimeStreamUrl(
                 this.episode.episodeId || this.episode.id || this.episode.url,
                 this.episode.source || this.libraryItem?.source || 'aniwatch'
             );
-            if (!streamData || !streamData.url) throw new Error('No stream URL returned');
+            if (!streamData || !streamData.url) throw new Error('No stream URL found');
 
             // Iframe embed mode — show embed in full-screen iframe
             if (streamData.type === 'iframe' && iframe) {
+                clearTimeout(loadTimeout);
                 video.style.display = 'none';
                 document.getElementById('player-controls')?.style.setProperty('display', 'none');
                 document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
@@ -158,12 +170,11 @@ export class PlayerScreen {
                 document.getElementById('iframe-controls').style.display = 'flex';
                 iframe.src = streamData.url;
 
-                // Auto-hide overlay after 5s, tap to toggle
                 let overlayTimer = setTimeout(() => {
                     document.getElementById('iframe-controls').style.display = 'none';
                 }, 5000);
                 iframe.parentElement.addEventListener('click', (e) => {
-                    if (e.target === iframe) return; // let iframe handle its own clicks
+                    if (e.target === iframe) return;
                     const ctrl = document.getElementById('iframe-controls');
                     if (ctrl) {
                         const visible = ctrl.style.display !== 'none';
@@ -173,23 +184,39 @@ export class PlayerScreen {
                     }
                 });
 
-                // Hide loading after short delay (iframe won't fire reliable load events)
                 setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
                 return;
             }
 
             const streamUrl = streamData.url;
+            if (loadingText) loadingText.textContent = 'Loading video…';
+
+            // Strategy 1: Try native HLS (Android WebView often supports it)
+            const nativeWorks = await this._tryNativeHls(video, streamUrl, loadTimeout);
+            if (nativeWorks) {
+                loadingEl.style.display = 'none';
+                this._setupControls(video);
+                this._startProgressSaving(video);
+                return;
+            }
+
+            // Strategy 2: Use HLS.js library
             await this._loadHls();
 
             if (window.Hls && window.Hls.isSupported()) {
                 this.hls = new window.Hls({
                     maxBufferLength: 30,
                     maxMaxBufferLength: 60,
+                    enableWorker: false,
+                    xhrSetup: (xhr) => {
+                        xhr.setRequestHeader('Referer', 'https://megacloud.blog/');
+                    }
                 });
                 this.hls.loadSource(streamUrl);
                 this.hls.attachMedia(video);
 
                 this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+                    clearTimeout(loadTimeout);
                     loadingEl.style.display = 'none';
                     this._restoreProgress(video);
                     video.play().catch(() => {});
@@ -203,28 +230,79 @@ export class PlayerScreen {
                         } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
                             this.hls.recoverMediaError();
                         } else {
+                            clearTimeout(loadTimeout);
                             this._showError('Playback error. Try again.');
                         }
                     }
                 });
-            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                // Safari native HLS
+            } else {
+                // Strategy 3: Direct src assignment (last resort)
                 video.src = streamUrl;
                 video.addEventListener('loadedmetadata', () => {
+                    clearTimeout(loadTimeout);
                     loadingEl.style.display = 'none';
                     this._restoreProgress(video);
                     video.play().catch(() => {});
                 }, { once: true });
-            } else {
-                throw new Error('HLS not supported in this browser');
+                video.addEventListener('error', () => {
+                    clearTimeout(loadTimeout);
+                    this._showError('Cannot play this stream format.');
+                }, { once: true });
             }
 
             this._setupControls(video);
             this._startProgressSaving(video);
         } catch (err) {
+            clearTimeout(loadTimeout);
             console.error('Player init failed:', err);
             this._showError(err.message || 'Failed to load stream.');
         }
+    }
+
+    /**
+     * Try playing m3u8 natively via video.src (works on many Android WebViews)
+     * Returns true if playback starts within 8s, false otherwise.
+     */
+    _tryNativeHls(video, url, parentTimeout) {
+        return new Promise((resolve) => {
+            // Check if the WebView can play HLS natively
+            if (!video.canPlayType('application/vnd.apple.mpegurl') &&
+                !video.canPlayType('application/x-mpegURL')) {
+                return resolve(false);
+            }
+
+            const cleanup = () => {
+                video.removeEventListener('loadedmetadata', onLoad);
+                video.removeEventListener('error', onError);
+                clearTimeout(timer);
+            };
+
+            const onLoad = () => {
+                cleanup();
+                clearTimeout(parentTimeout);
+                this._restoreProgress(video);
+                video.play().catch(() => {});
+                resolve(true);
+            };
+
+            const onError = () => {
+                cleanup();
+                video.removeAttribute('src');
+                video.load();
+                resolve(false);
+            };
+
+            const timer = setTimeout(() => {
+                cleanup();
+                video.removeAttribute('src');
+                video.load();
+                resolve(false);
+            }, 8000);
+
+            video.addEventListener('loadedmetadata', onLoad, { once: true });
+            video.addEventListener('error', onError, { once: true });
+            video.src = url;
+        });
     }
 
     _showError(msg) {
