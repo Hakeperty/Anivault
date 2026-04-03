@@ -44,7 +44,8 @@ export class MangaDexScraper {
 
             const url = `${MANGADEX_API}/manga?${params.toString()}`;
             const data = await http.getJSON(url);
-            return this.parseSearchResults(data);
+            const results = this.parseSearchResults(data);
+            return await this._attachStatistics(results);
         } catch (error) {
             console.error('MangaDex search error:', error);
             return [];
@@ -109,9 +110,12 @@ export class MangaDexScraper {
                         .filter(t => t.attributes?.group === 'genre')
                         .map(t => t.attributes?.name?.en).filter(Boolean),
                     chapters: attributes.lastChapter ? parseInt(attributes.lastChapter) : null,
+                    year: attributes.year || null,
+                    status: attributes.status || null,
                     url: `${MANGADEX_API}/manga/${manga.id}`,
                     source: 'mangadex',
-                    type: 'manga'
+                    type: 'manga',
+                    score: null // filled by _attachStatistics
                 });
             } catch (e) {
                 console.debug('Parse error on manga:', e);
@@ -119,6 +123,31 @@ export class MangaDexScraper {
         });
 
         return results;
+    }
+
+    /**
+     * Fetch statistics (ratings) for a batch of manga and attach to items
+     */
+    static async _attachStatistics(items) {
+        if (!items.length) return items;
+        try {
+            const ids = items.map(i => i.id).slice(0, 100);
+            const params = ids.map(id => `manga[]=${id}`).join('&');
+            const url = `${MANGADEX_API}/statistics/manga?${params}`;
+            const data = await http.getJSON(url);
+            const stats = data.statistics || {};
+            for (const item of items) {
+                const s = stats[item.id];
+                if (s?.rating?.bayesian) {
+                    item.score = Math.round(s.rating.bayesian * 10) / 10;
+                } else if (s?.rating?.average) {
+                    item.score = Math.round(s.rating.average * 10) / 10;
+                }
+            }
+        } catch (e) {
+            console.debug('MangaDex statistics fetch error:', e);
+        }
+        return items;
     }
 
     /**
@@ -184,10 +213,12 @@ export class MangaDexScraper {
             params.append('contentRating[]', 'suggestive');
             params.set('order[followedCount]', 'desc');
             params.set('hasAvailableChapters', 'true');
+            params.append('availableTranslatedLanguage[]', 'en');
 
             const url = `${MANGADEX_API}/manga?${params.toString()}`;
             const data = await http.getJSON(url);
-            return this.parseSearchResults(data);
+            const results = this.parseSearchResults(data);
+            return await this._attachStatistics(results);
         } catch (error) {
             console.error('MangaDex popular error:', error);
             return [];
@@ -210,7 +241,8 @@ export class MangaDexScraper {
 
             const url = `${MANGADEX_API}/manga?${params.toString()}`;
             const data = await http.getJSON(url);
-            return this.parseSearchResults(data);
+            const results = this.parseSearchResults(data);
+            return await this._attachStatistics(results);
         } catch (error) {
             console.error('MangaDex recent error:', error);
             return [];
