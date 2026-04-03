@@ -154,6 +154,7 @@ class AniVaultApp {
 
             this.currentScreen = { name: screenName, instance: screen };
             this.history.push(screenName);
+            this.updateNavigation(screenName);
         } catch (error) {
             console.error(`Error loading screen ${screenName}:`, error);
             showToast(`Failed to load ${screenName}`, 'error');
