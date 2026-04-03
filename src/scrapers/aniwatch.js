@@ -488,11 +488,6 @@ export class AniWatchScraper {
         return episodes.sort((a, b) => a.number - b.number);
     }
 
-    static _parseServers(html) {
-        const servers = this._parseAllServers(html);
-        return servers.length > 0 ? servers[0].id : null;
-    }
-
     /**
      * Parse all server entries from the servers HTML, returning typed objects.
      * @returns {Array<{id: string, type: string}>} — type is 'sub', 'dub', or 'raw'

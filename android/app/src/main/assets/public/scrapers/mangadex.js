@@ -24,7 +24,10 @@ export class MangaDexScraper {
         for (const alt of alts) {
             if (alt.en) return alt.en;
         }
-        // Fallback: first available value
+        // Fallback: prefer romanized titles over raw Japanese/Chinese/Korean
+        for (const key of Object.keys(t)) {
+            if (key.endsWith('-ro') || key === 'en') return t[key];
+        }
         const vals = Object.values(t);
         return vals.length > 0 ? vals[0] : 'Unknown';
     }

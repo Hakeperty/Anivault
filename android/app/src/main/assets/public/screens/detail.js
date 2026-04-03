@@ -161,9 +161,15 @@ export class DetailScreen {
             try {
                 const results = await JikanScraper.search(this.item.title);
                 if (results.length > 0) {
-                    const match = results[0];
-                    this.item.malId = match.malId;
-                    return this._loadRelationsForMalId(match.malId, section, list);
+                    // Smart match: don't blindly pick first result
+                    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const target = normalize(this.item.title);
+                    const match = results.find(r => normalize(r.title) === target)
+                        || results.find(r => normalize(r.title).includes(target) || target.includes(normalize(r.title)));
+                    if (match?.malId) {
+                        this.item.malId = match.malId;
+                        return this._loadRelationsForMalId(match.malId, section, list);
+                    }
                 }
             } catch (e) { /* no relations */ }
             return;
