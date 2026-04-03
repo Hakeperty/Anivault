@@ -37,6 +37,7 @@ export class SearchScreen {
                     <svg class="empty-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     <p>Search across multiple sources</p>
                     <p class="search-hint">Find anime and manga from AniWatch, MangaKatana, MangaDex</p>
+                    <div id="search-history" class="search-history"></div>
                 </div>
             </div>
         `;
@@ -78,6 +79,48 @@ export class SearchScreen {
 
         // Auto-focus the input
         setTimeout(() => input?.focus(), 100);
+
+        // Show recent search history
+        this._renderHistory();
+    }
+
+    _getHistory() {
+        try {
+            return JSON.parse(localStorage.getItem('anivault-search-history') || '[]');
+        } catch { return []; }
+    }
+
+    _saveToHistory(query) {
+        if (!query) return;
+        let history = this._getHistory().filter(h => h.toLowerCase() !== query.toLowerCase());
+        history.unshift(query);
+        history = history.slice(0, 8);
+        localStorage.setItem('anivault-search-history', JSON.stringify(history));
+    }
+
+    _renderHistory() {
+        const container = document.getElementById('search-history');
+        if (!container) return;
+        const history = this._getHistory();
+        if (history.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = `
+            <p class="search-history-label">Recent</p>
+            <div class="search-history-chips">
+                ${history.map(q => `<button class="search-history-chip" data-query="${q.replace(/"/g, '&quot;')}">${q}</button>`).join('')}
+            </div>
+        `;
+        container.querySelectorAll('.search-history-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const q = chip.dataset.query;
+                const input = document.getElementById('search-input');
+                if (input) input.value = q;
+                document.getElementById('search-clear')?.classList.remove('hidden');
+                this.executeSearch(q);
+            });
+        });
     }
 
     debounceSearch(query) {
@@ -85,6 +128,11 @@ export class SearchScreen {
         if (!query) {
             this.clearResults();
             return;
+        }
+        // Show instant "Searching..." feedback
+        const status = document.getElementById('search-status');
+        if (status) {
+            status.innerHTML = '<div class="search-typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span> Searching…</div>';
         }
         this.debounceTimer = setTimeout(() => this.executeSearch(query), 500);
     }
@@ -99,11 +147,9 @@ export class SearchScreen {
         try {
             const results = await SearchCoordinator.searchAll(query, this.activeFilter);
             this.searchResults = results.all || [];
-
-            // Deduplicate by title similarity
             this.searchResults = this.deduplicateResults(this.searchResults);
-
             this.renderResults();
+            this._saveToHistory(query);
 
             const count = this.searchResults.length;
             if (count === 0) {
@@ -248,6 +294,7 @@ export class SearchScreen {
         if (status) status.innerHTML = '';
         if (results) results.innerHTML = '';
         if (emptyState) emptyState.classList.remove('hidden');
+        this._renderHistory();
     }
 
     /** Called by main.js when navigating away from search */

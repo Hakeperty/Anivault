@@ -18,7 +18,7 @@ export class PlayerScreen {
         this.progressInterval = null;
         this.controlsTimeout = null;
         this.controlsVisible = true;
-        this.playbackRate = 1;
+        this.playbackRate = parseFloat(localStorage.getItem('anivault-playback-rate')) || 1;
         this._skipIntroDismissed = false;
         this._autoPlayTimer = null;
         this._audioType = localStorage.getItem('anivault-audio-pref') || 'sub';
@@ -608,11 +608,14 @@ export class PlayerScreen {
         const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
         const btn = document.getElementById('player-speed-btn');
         if (!btn) return;
+        video.playbackRate = this.playbackRate;
+        btn.textContent = `${this.playbackRate}x`;
         btn.addEventListener('click', () => {
             const idx = speeds.indexOf(this.playbackRate);
             this.playbackRate = speeds[(idx + 1) % speeds.length];
             video.playbackRate = this.playbackRate;
             btn.textContent = `${this.playbackRate}x`;
+            localStorage.setItem('anivault-playback-rate', this.playbackRate);
         });
     }
 

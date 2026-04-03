@@ -11,6 +11,7 @@ export class LibraryScreen {
         this.continueWatching = [];
         this.filterType = 'all';
         this.searchQuery = '';
+        this.sortBy = localStorage.getItem('anivault-library-sort') || 'updated';
     }
 
     async render() {
@@ -35,10 +36,19 @@ export class LibraryScreen {
                             <svg class="library-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="20" y2="20"/></svg>
                             <input type="text" id="library-search" class="library-search-input" placeholder="Filter library...">
                         </div>
-                        <div class="library-filters">
-                            <button class="filter-chip ${this.filterType === 'all' ? 'active' : ''}" data-type="all">All</button>
-                            <button class="filter-chip ${this.filterType === 'anime' ? 'active' : ''}" data-type="anime">Anime</button>
-                            <button class="filter-chip ${this.filterType === 'manga' ? 'active' : ''}" data-type="manga">Manga</button>
+                        <div class="library-toolbar-row">
+                            <div class="library-filters">
+                                <button class="filter-chip ${this.filterType === 'all' ? 'active' : ''}" data-type="all">All</button>
+                                <button class="filter-chip ${this.filterType === 'anime' ? 'active' : ''}" data-type="anime">Anime</button>
+                                <button class="filter-chip ${this.filterType === 'manga' ? 'active' : ''}" data-type="manga">Manga</button>
+                            </div>
+                            <select id="library-sort" class="library-sort-select">
+                                <option value="updated" ${this.sortBy === 'updated' ? 'selected' : ''}>Recently Updated</option>
+                                <option value="added" ${this.sortBy === 'added' ? 'selected' : ''}>Date Added</option>
+                                <option value="alpha" ${this.sortBy === 'alpha' ? 'selected' : ''}>A → Z</option>
+                                <option value="alpha-desc" ${this.sortBy === 'alpha-desc' ? 'selected' : ''}>Z → A</option>
+                                <option value="progress" ${this.sortBy === 'progress' ? 'selected' : ''}>Progress %</option>
+                            </select>
                         </div>
                     </div>
                 ` : ''}
@@ -76,6 +86,7 @@ export class LibraryScreen {
                             <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                             <h2>Your library is empty</h2>
                             <p>Search for anime or manga to add to your collection</p>
+                            <button id="empty-search-btn" class="btn btn-primary" style="margin-top:12px;">Start Searching</button>
                         </div>
                     ` : `
                         <div id="library-grid" class="library-grid">
@@ -88,15 +99,22 @@ export class LibraryScreen {
     }
 
     renderLibraryItem(item) {
+        const progressPct = this.getProgressPercent(item);
+        const epLabel = item.type === 'anime'
+            ? `Ep ${item.progress?.currentEpisode || 0}${item.episodes ? '/' + item.episodes : ''}`
+            : `Ch ${item.progress?.currentChapter || 0}${item.chapters ? '/' + item.chapters : ''}`;
+        const hasProgress = item.progress && (item.progress.currentEpisode || item.progress.currentChapter);
+
         return `
             <div class="library-item" data-id="${item.id}">
                 <div class="cover-wrapper">
                     <img src="${item.coverImage}" alt="${item.title}" class="cover"
                          onerror="this.style.display='none'">
-                    ${item.progress ? `
-                        <div class="progress-badge">${item.type === 'anime' ? 
-                            (item.progress.currentEpisode || 0) : 
-                            (item.progress.currentChapter || 0)}</div>
+                    ${hasProgress ? `<span class="library-ep-badge">${epLabel}</span>` : ''}
+                    ${progressPct > 0 ? `
+                        <div class="library-item-progress">
+                            <div class="library-item-progress-fill" style="width:${Math.min(progressPct, 100)}%"></div>
+                        </div>
                     ` : ''}
                     <div class="overlay"></div>
                 </div>
@@ -106,12 +124,38 @@ export class LibraryScreen {
     }
 
     getFilteredLibrary() {
-        return this.library.filter(item => {
+        let items = this.library.filter(item => {
             const matchesType = this.filterType === 'all' || item.type === this.filterType;
             const matchesSearch = !this.searchQuery || 
                 item.title.toLowerCase().includes(this.searchQuery.toLowerCase());
             return matchesType && matchesSearch;
         });
+
+        // Sort
+        switch (this.sortBy) {
+            case 'alpha':
+                items.sort((a, b) => a.title.localeCompare(b.title));
+                break;
+            case 'alpha-desc':
+                items.sort((a, b) => b.title.localeCompare(a.title));
+                break;
+            case 'progress':
+                items.sort((a, b) => this.getProgressPercent(b) - this.getProgressPercent(a));
+                break;
+            case 'updated':
+                items.sort((a, b) => {
+                    const aDate = a.progress?.lastUpdated || a.addedAt || 0;
+                    const bDate = b.progress?.lastUpdated || b.addedAt || 0;
+                    return new Date(bDate) - new Date(aDate);
+                });
+                break;
+            case 'added':
+            default:
+                items.sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
+                break;
+        }
+
+        return items;
     }
 
     async afterRender() {
@@ -142,6 +186,18 @@ export class LibraryScreen {
                 this.filterType = btn.dataset.type;
                 this.updateGrid();
             });
+        });
+
+        // Sort select
+        document.getElementById('library-sort')?.addEventListener('change', (e) => {
+            this.sortBy = e.target.value;
+            localStorage.setItem('anivault-library-sort', this.sortBy);
+            this.updateGrid();
+        });
+
+        // Empty state → Search
+        document.getElementById('empty-search-btn')?.addEventListener('click', () => {
+            document.querySelector('.nav-btn[data-screen="search"]')?.click();
         });
     }
 

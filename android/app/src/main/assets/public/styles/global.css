@@ -55,7 +55,8 @@ body {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding-bottom: 60px;
+    padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* ========== Bottom Navigation ========== */
@@ -64,7 +65,8 @@ body {
     bottom: 0;
     left: 0;
     right: 0;
-    height: 60px;
+    height: calc(60px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     background: rgba(17, 17, 17, 0.88);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
@@ -241,7 +243,7 @@ p {
 /* ========== Toast Notifications ========== */
 .toast {
     position: fixed;
-    bottom: 80px;
+    bottom: calc(70px + var(--toast-offset, 0px));
     left: 16px;
     right: 16px;
     max-width: 300px;
@@ -260,7 +262,7 @@ p {
 }
 
 .toast.show {
-    transform: translateY(0);
+    transform: translateY(calc(-1 * var(--toast-offset, 0px)));
     opacity: 1;
 }
 
@@ -1771,4 +1773,139 @@ p {
 @keyframes dialogPop {
     from { opacity: 0; transform: scale(0.92); }
     to { opacity: 1; transform: scale(1); }
+}
+
+/* ========== Library Improvements ========== */
+.library-toolbar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.library-sort-select {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 12px;
+    outline: none;
+    min-width: 120px;
+}
+
+.library-sort-select:focus {
+    border-color: var(--accent-primary);
+}
+
+.library-ep-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(4px);
+    color: var(--accent-primary);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+    z-index: 2;
+}
+
+.library-item-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: rgba(255,255,255,0.1);
+    z-index: 2;
+}
+
+.library-item-progress-fill {
+    height: 100%;
+    background: var(--accent-primary);
+    border-radius: 0 2px 0 0;
+    transition: width 0.3s ease;
+}
+
+.empty-state .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 24px;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    border: none;
+    border-radius: var(--radius-md);
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+/* ========== Search History ========== */
+.search-history {
+    margin-top: 16px;
+    text-align: center;
+}
+
+.search-history-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.search-history-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+}
+
+.search-history-chip {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 6px 14px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.search-history-chip:hover,
+.search-history-chip:active {
+    background: var(--accent-primary);
+    color: #fff;
+    border-color: var(--accent-primary);
+}
+
+/* ========== Search Typing Indicator ========== */
+.search-typing-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-tertiary);
+    font-size: 13px;
+    padding: 8px 0;
+}
+
+.search-typing-indicator .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    animation: typingBounce 1s infinite ease-in-out;
+}
+
+.search-typing-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+.search-typing-indicator .dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typingBounce {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1.2); }
 }
