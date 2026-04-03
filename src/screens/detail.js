@@ -3,6 +3,7 @@
  */
 
 import { SearchCoordinator } from '../scrapers/coordinator.js';
+import { JikanScraper } from '../scrapers/jikan.js';
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
 
@@ -76,6 +77,12 @@ export class DetailScreen {
                             <p class="detail-description">${truncatedDesc}</p>
                         </div>
                     ` : ''}
+                    ${type === 'anime' ? `
+                        <div id="relations-section" class="detail-section" style="display:none">
+                            <h3 class="detail-section-title">Seasons & Related</h3>
+                            <div id="relations-list" class="relations-list"></div>
+                        </div>
+                    ` : ''}
                     <div class="detail-section">
                         <h3 class="detail-section-title">${type === 'manga' ? 'Chapters' : 'Episodes'}</h3>
                         <div id="content-list" class="content-list">
@@ -104,6 +111,11 @@ export class DetailScreen {
 
         // Load episodes/chapters
         this.loadContent();
+
+        // Load relations for anime (non-blocking)
+        if ((this.item.type || 'anime') === 'anime') {
+            this._loadRelations();
+        }
     }
 
     async loadContent() {
@@ -134,6 +146,116 @@ export class DetailScreen {
         } catch (error) {
             console.error('Failed to load content:', error);
             container.innerHTML = `<p class="content-error">Could not load ${type === 'manga' ? 'chapters' : 'episodes'}</p>`;
+        }
+    }
+
+    async _loadRelations() {
+        const section = document.getElementById('relations-section');
+        const list = document.getElementById('relations-list');
+        if (!section || !list) return;
+
+        // Extract MAL ID
+        const malId = this.item.malId || (this.item.id?.startsWith('mal-') ? parseInt(this.item.id.replace('mal-', '')) : null);
+        if (!malId) {
+            // Try searching Jikan by title to get malId
+            try {
+                const results = await JikanScraper.search(this.item.title);
+                if (results.length > 0) {
+                    const match = results[0];
+                    this.item.malId = match.malId;
+                    return this._loadRelationsForMalId(match.malId, section, list);
+                }
+            } catch (e) { /* no relations */ }
+            return;
+        }
+        return this._loadRelationsForMalId(malId, section, list);
+    }
+
+    async _loadRelationsForMalId(malId, section, list) {
+        try {
+            const relations = await JikanScraper.getRelations(malId);
+            if (!relations.length) return;
+
+            // Order: Prequel first, then current, then sequel, then others
+            const ORDER = { 'Prequel': 0, 'Parent story': 1, 'Side story': 3, 'Sequel': 4, 'Alternative version': 5, 'Spin-off': 6, 'Summary': 7 };
+            relations.sort((a, b) => (ORDER[a.relation] ?? 99) - (ORDER[b.relation] ?? 99));
+
+            // Fetch cover images for first few relations (with Jikan rate limit awareness)
+            const enriched = [];
+            for (const rel of relations.slice(0, 6)) {
+                try {
+                    // Small delay for Jikan rate limit (3 req/s)
+                    if (enriched.length > 0) await new Promise(r => setTimeout(r, 350));
+                    const details = await JikanScraper.getBasicById(rel.malId);
+                    if (details) {
+                        enriched.push({ ...rel, ...details, relation: rel.relation });
+                    } else {
+                        enriched.push(rel);
+                    }
+                } catch (e) {
+                    enriched.push(rel);
+                }
+            }
+            // Add remaining without enrichment
+            for (const rel of relations.slice(6)) {
+                enriched.push(rel);
+            }
+
+            if (!enriched.length) return;
+
+            const RELATION_LABELS = {
+                'Prequel': '⏮ Prequel',
+                'Sequel': '⏭ Sequel',
+                'Parent story': '📖 Main Story',
+                'Side story': '📎 Side Story',
+                'Alternative version': '🔄 Alt Version',
+                'Spin-off': '🌀 Spin-off',
+                'Summary': '📋 Summary'
+            };
+
+            list.innerHTML = enriched.map(rel => `
+                <div class="relation-card" data-mal-id="${rel.malId}">
+                    ${rel.coverImage ? `<img class="relation-cover" src="${rel.coverImage}" alt="${rel.title}" onerror="this.style.display='none'">` : 
+                        '<div class="relation-cover-placeholder"></div>'}
+                    <div class="relation-info">
+                        <span class="relation-type">${RELATION_LABELS[rel.relation] || rel.relation}</span>
+                        <span class="relation-title">${rel.title}</span>
+                        ${rel.episodes ? `<span class="relation-meta">${rel.episodes} eps</span>` : ''}
+                        ${rel.score ? `<span class="relation-meta">★ ${rel.score}</span>` : ''}
+                    </div>
+                </div>
+            `).join('');
+
+            section.style.display = '';
+
+            // Click handlers — navigate to the related anime
+            list.querySelectorAll('.relation-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const mId = parseInt(card.dataset.malId);
+                    const rel = enriched.find(r => r.malId === mId);
+                    if (!rel) return;
+                    document.dispatchEvent(new CustomEvent('navigateToDetail', {
+                        detail: {
+                            item: {
+                                id: rel.id || `mal-${mId}`,
+                                malId: mId,
+                                title: rel.title,
+                                coverImage: rel.coverImage || '',
+                                description: rel.description || '',
+                                type: 'anime',
+                                source: 'jikan',
+                                url: rel.url || '',
+                                genres: rel.genres || [],
+                                episodes: rel.episodes || null,
+                                score: rel.score || null
+                            },
+                            source: 'jikan'
+                        }
+                    }));
+                });
+            });
+        } catch (error) {
+            console.error('Failed to load relations:', error);
         }
     }
 

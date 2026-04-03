@@ -123,6 +123,68 @@ export class JikanScraper {
     }
 
     /**
+     * Get anime relations (prequels, sequels, side stories, etc.)
+     */
+    static async getRelations(malId) {
+        try {
+            const url = `${JIKAN_API}/anime/${malId}/relations`;
+            const data = await http.getJSON(url);
+            const relations = [];
+            const SEASON_TYPES = ['Prequel', 'Sequel', 'Parent story', 'Side story', 'Alternative version', 'Spin-off', 'Summary'];
+
+            for (const group of (data.data || [])) {
+                const relType = group.relation || '';
+                if (!SEASON_TYPES.includes(relType)) continue;
+                for (const entry of (group.entry || [])) {
+                    if (entry.type !== 'anime') continue;
+                    relations.push({
+                        malId: entry.mal_id,
+                        id: `mal-${entry.mal_id}`,
+                        title: entry.name || 'Unknown',
+                        relation: relType,
+                        url: entry.url || '',
+                        type: 'anime',
+                        source: 'jikan'
+                    });
+                }
+            }
+            return relations;
+        } catch (error) {
+            console.error('Jikan relations error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Get basic details for multiple anime by MAL IDs (for relation cards)
+     */
+    static async getBasicById(malId) {
+        try {
+            const url = `${JIKAN_API}/anime/${malId}`;
+            const data = await http.getJSON(url);
+            const anime = data.data;
+            if (!anime) return null;
+            return {
+                id: `mal-${anime.mal_id}`,
+                malId: anime.mal_id,
+                title: anime.title || anime.title_english || 'Unknown',
+                coverImage: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || '',
+                episodes: anime.episodes || null,
+                score: anime.score || null,
+                type: 'anime',
+                source: 'jikan',
+                url: anime.url || '',
+                genres: (anime.genres || []).map(g => g.name).filter(Boolean),
+                year: anime.year || null,
+                status: anime.status || 'Unknown'
+            };
+        } catch (error) {
+            console.error('Jikan getBasicById error:', error);
+            return null;
+        }
+    }
+
+    /**
      * Parse search results from Jikan API
      */
     static parseSearchResults(data) {
