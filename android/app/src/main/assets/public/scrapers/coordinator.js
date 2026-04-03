@@ -314,12 +314,6 @@ export class SearchCoordinator {
     }
 
     /** Fuzzy title comparison */
-    static _titlesMatch(a, b) {
-        if (!a || !b) return false;
-        const normalize = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return normalize(a) === normalize(b);
-    }
-
     static _extractAniwatchSlug(value) {
         if (!value) return '';
         let text = String(value).trim();
