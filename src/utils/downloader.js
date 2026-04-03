@@ -9,8 +9,8 @@
  * segments → concatenates into a single video blob → stores as base64 data
  * URL in IndexedDB for offline playback.
  *
- * Runs a processing loop that picks the next "queued" item and works on it.
- * Exposes start/stop and per-item cancel.
+ * Uses native CapacitorHttp plugin directly for CDN downloads (bypasses
+ * fetch patch which silently drops headers, causing 403 from CDNs).
  */
 
 import { db } from '../db/indexeddb.js';
@@ -24,6 +24,7 @@ class _DownloadManager {
         this._timer = null;
         this._currentId = null;
         this._aborted = false;
+        this._plugin = undefined;
     }
 
     start() {
@@ -171,7 +172,7 @@ class _DownloadManager {
         const m3u8Url = streamData.url;
 
         // 2. Fetch master m3u8
-        const m3u8Text = await this._fetchText(m3u8Url);
+        const m3u8Text = await this._fetchText(m3u8Url, 'https://megacloud.blog/');
         if (this._aborted) throw new Error('Cancelled');
 
         // 3. Parse — if master playlist, pick a quality; if media playlist, use directly
@@ -188,7 +189,6 @@ class _DownloadManager {
                 if (match) {
                     const bw = parseInt(match[1], 10);
                     const nextLine = lines[i + 1]?.trim();
-                    // Prefer 720p-ish (1-3M bandwidth) but fall back to lowest
                     if (nextLine && !nextLine.startsWith('#')) {
                         if (bw < bestBw) {
                             bestBw = bw;
@@ -199,7 +199,7 @@ class _DownloadManager {
             }
             if (bestLine) {
                 mediaUrl = new URL(bestLine, m3u8Url).href;
-                mediaText = await this._fetchText(mediaUrl);
+                mediaText = await this._fetchText(mediaUrl, m3u8Url);
             }
         }
 
@@ -219,7 +219,8 @@ class _DownloadManager {
         if (segments.length === 0) throw new Error('No video segments found in playlist');
         console.log(`[DL] Found ${segments.length} segments to download`);
 
-        // 5. Download all segments with retry logic
+        // 5. Download all segments using native HTTP plugin (bypasses fetch patch)
+        const segReferer = mediaUrl; // Use the m3u8 playlist URL as referer for segments
         const chunks = [];
         let totalBytes = 0;
         let failedCount = 0;
@@ -227,16 +228,21 @@ class _DownloadManager {
             if (this._aborted) throw new Error('Cancelled');
 
             try {
-                const buf = await this._fetchSegment(segments[i]);
+                const buf = await this._fetchSegment(segments[i], segReferer);
                 chunks.push(buf);
                 totalBytes += buf.byteLength;
+                failedCount = 0; // Reset consecutive failure counter
             } catch (e) {
                 failedCount++;
                 console.warn(`[DL] segment ${i + 1}/${segments.length} failed:`, e.message);
-                // If too many fail in a row, abort early
-                if (failedCount > 5 && chunks.length === 0) {
+                if (failedCount > 3 && chunks.length === 0) {
                     throw new Error(`CDN blocked downloads (${e.message}). Try again later.`);
                 }
+            }
+
+            // Small delay between segments to avoid CDN rate-limiting
+            if (i < segments.length - 1) {
+                await new Promise(r => setTimeout(r, 50));
             }
 
             // Progress: 10–90% for segment downloads
@@ -270,10 +276,23 @@ class _DownloadManager {
 
     // ── Shared helpers ──
 
-    /** Standard headers that mimic a real browser (required by CDNs like crimsonstorm) */
-    _streamHeaders() {
+    /** Get the native Capacitor HTTP plugin (bypasses fetch patch) */
+    _getNativePlugin() {
+        if (this._plugin !== undefined) return this._plugin;
+        try {
+            this._plugin = window.Capacitor?.Plugins?.CapacitorHttp ||
+                           window.Capacitor?.Plugins?.Http ||
+                           null;
+        } catch (e) {
+            this._plugin = null;
+        }
+        return this._plugin;
+    }
+
+    /** Standard CDN headers */
+    _streamHeaders(referer) {
         return {
-            'Referer': 'https://megacloud.blog/',
+            'Referer': referer || 'https://megacloud.blog/',
             'Origin': 'https://megacloud.blog',
             'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
             'Accept': '*/*',
@@ -281,32 +300,92 @@ class _DownloadManager {
         };
     }
 
-    async _fetchText(url) {
-        const resp = await fetch(url, { headers: this._streamHeaders() });
+    /** Fetch text content using native plugin or fetch fallback */
+    async _fetchText(url, referer) {
+        const plugin = this._getNativePlugin();
+        if (plugin) {
+            try {
+                const resp = await plugin.request({
+                    method: 'GET', url,
+                    headers: this._streamHeaders(referer),
+                });
+                if (resp.status >= 200 && resp.status < 300) {
+                    return typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+                }
+                throw new Error(`HTTP ${resp.status} fetching ${url}`);
+            } catch (e) {
+                console.warn('[DL] native _fetchText failed, trying fetch:', e.message);
+            }
+        }
+        const resp = await fetch(url, { headers: this._streamHeaders(referer) });
         if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
         return resp.text();
     }
 
-    /** Fetch a segment with retry (CDNs sometimes 403 on first try) */
-    async _fetchSegment(url, retries = 2) {
+    /** Convert base64 string to ArrayBuffer */
+    _base64ToArrayBuffer(base64) {
+        // The native plugin may return data with data-url prefix or raw base64
+        const raw = base64.includes(',') ? base64.split(',')[1] : base64;
+        const binary = atob(raw);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+    }
+
+    /** Fetch a binary segment using native plugin (with retry) */
+    async _fetchSegment(url, referer, retries = 2) {
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
-                const resp = await fetch(url, { headers: this._streamHeaders() });
-                if (resp.ok) return resp.arrayBuffer();
-                if (resp.status === 403 && attempt < retries) {
-                    // Wait before retry — CDN rate limiting
-                    await new Promise(r => setTimeout(r, 500 + attempt * 500));
-                    continue;
+                const plugin = this._getNativePlugin();
+                if (plugin) {
+                    const resp = await plugin.request({
+                        method: 'GET', url,
+                        headers: this._streamHeaders(referer),
+                        responseType: 'blob', // Returns base64 through native bridge
+                    });
+                    if (resp.status >= 200 && resp.status < 300) {
+                        return this._base64ToArrayBuffer(resp.data);
+                    }
+                    if (resp.status === 403 && attempt < retries) {
+                        console.warn(`[DL] 403 on attempt ${attempt + 1}, retrying...`);
+                        await new Promise(r => setTimeout(r, 800 + attempt * 800));
+                        continue;
+                    }
+                    throw new Error(`HTTP ${resp.status}`);
                 }
+                // Fallback: regular fetch
+                const resp = await fetch(url, { headers: this._streamHeaders(referer) });
+                if (resp.ok) return resp.arrayBuffer();
                 throw new Error(`HTTP ${resp.status}`);
             } catch (e) {
                 if (attempt >= retries) throw e;
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 800));
             }
         }
     }
 
     async _fetchAsDataUrl(url) {
+        const plugin = this._getNativePlugin();
+        if (plugin) {
+            try {
+                const resp = await plugin.request({
+                    method: 'GET', url,
+                    headers: {
+                        'Referer': new URL(url).origin + '/',
+                        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                    },
+                    responseType: 'blob',
+                });
+                if (resp.status >= 200 && resp.status < 300) {
+                    const raw = (resp.data || '').includes(',') ? resp.data.split(',')[1] : resp.data;
+                    // Re-encode as proper data URL with content-type guess
+                    const ct = (resp.headers?.['content-type'] || resp.headers?.['Content-Type'] || 'image/jpeg');
+                    return `data:${ct};base64,${raw}`;
+                }
+            } catch (e) {
+                console.warn('[DL] native _fetchAsDataUrl failed, trying fetch:', e.message);
+            }
+        }
         const response = await fetch(url, {
             headers: { 'Referer': new URL(url).origin + '/' }
         });
