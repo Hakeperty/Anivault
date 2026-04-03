@@ -76,11 +76,6 @@ export class SearchScreen {
             });
         });
 
-        // Restore previous results if any
-        if (this.searchResults.length > 0) {
-            this.renderResults();
-        }
-
         // Auto-focus the input
         setTimeout(() => input?.focus(), 100);
     }
@@ -253,5 +248,13 @@ export class SearchScreen {
         if (status) status.innerHTML = '';
         if (results) results.innerHTML = '';
         if (emptyState) emptyState.classList.remove('hidden');
+    }
+
+    /** Called by main.js when navigating away from search */
+    deactivate() {
+        clearTimeout(this.debounceTimer);
+        this.searchResults = [];
+        this.lastQuery = '';
+        this.isSearching = false;
     }
 }

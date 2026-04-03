@@ -142,6 +142,7 @@ class AniVaultApp {
             const html = await screen.render();
             container.innerHTML = html;
             await screen.afterRender();
+            this._observeImages(container);
 
             this.currentScreen = { name: screenName, instance: screen };
             this.history.push(screenName);
@@ -163,6 +164,7 @@ class AniVaultApp {
             const html = await detailScreen.render();
             container.innerHTML = html;
             await detailScreen.afterRender();
+            this._observeImages(container);
             this.currentScreen = { name: 'detail', instance: detailScreen };
             
             // Update nav
@@ -242,6 +244,33 @@ class AniVaultApp {
         document.querySelectorAll('.nav-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.screen === screenName);
         });
+    }
+
+    /** Fade-in images as they load inside a container */
+    _observeImages(container) {
+        if (!container) return;
+        const process = (img) => {
+            if (img.complete && img.naturalWidth > 0) {
+                img.classList.add('loaded');
+            } else {
+                img.addEventListener('load', () => img.classList.add('loaded'), { once: true });
+                img.addEventListener('error', () => img.classList.add('loaded'), { once: true });
+            }
+        };
+        container.querySelectorAll('img').forEach(process);
+
+        // Watch for dynamically added images (e.g. search results)
+        if (this._imgObserver) this._imgObserver.disconnect();
+        this._imgObserver = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                for (const node of m.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    if (node.tagName === 'IMG') process(node);
+                    else node.querySelectorAll?.('img')?.forEach(process);
+                }
+            }
+        });
+        this._imgObserver.observe(container, { childList: true, subtree: true });
     }
 }
 

@@ -18,6 +18,9 @@
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
+    --transition-fast: 0.15s cubic-bezier(.4,0,.2,1);
+    --transition-med: 0.25s cubic-bezier(.4,0,.2,1);
+    --transition-slow: 0.35s cubic-bezier(.4,0,.2,1);
 }
 
 * {
@@ -279,12 +282,12 @@ p {
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    animation: screenSlideIn 0.22s ease-out;
+    animation: screenFadeIn 0.3s cubic-bezier(.4,0,.2,1);
 }
 
-@keyframes screenSlideIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+@keyframes screenFadeIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.99); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .screen-header {
@@ -1282,4 +1285,196 @@ p {
     .search-results-grid {
         grid-template-columns: repeat(4, 1fr);
     }
+}
+
+/* ========== Image Fade-In on Load ========== */
+.result-cover,
+.library-item .cover,
+.continue-item .cover,
+.detail-cover {
+    opacity: 0;
+    transition: opacity 0.35s cubic-bezier(.4,0,.2,1);
+}
+
+.result-cover.loaded,
+.library-item .cover.loaded,
+.continue-item .cover.loaded,
+.detail-cover.loaded {
+    opacity: 1;
+}
+
+/* ========== Tap Ripple Effect ========== */
+.search-result-item,
+.library-item,
+.continue-item,
+.content-item,
+.settings-item:not(.static),
+.filter-btn,
+.filter-chip {
+    position: relative;
+    overflow: hidden;
+}
+
+.search-result-item::after,
+.library-item::after,
+.content-item::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at var(--ripple-x, 50%) var(--ripple-y, 50%), rgba(255,107,53,0.18) 0%, transparent 65%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.search-result-item:active::after,
+.library-item:active::after,
+.content-item:active::after {
+    opacity: 1;
+}
+
+/* ========== Staggered Grid Animation ========== */
+.search-results-grid .search-result-item,
+.library-grid .library-item {
+    animation: cardFadeUp 0.35s cubic-bezier(.4,0,.2,1) both;
+}
+
+.search-results-grid .search-result-item:nth-child(1) { animation-delay: 0.02s; }
+.search-results-grid .search-result-item:nth-child(2) { animation-delay: 0.05s; }
+.search-results-grid .search-result-item:nth-child(3) { animation-delay: 0.08s; }
+.search-results-grid .search-result-item:nth-child(4) { animation-delay: 0.11s; }
+.search-results-grid .search-result-item:nth-child(5) { animation-delay: 0.14s; }
+.search-results-grid .search-result-item:nth-child(6) { animation-delay: 0.17s; }
+.search-results-grid .search-result-item:nth-child(n+7) { animation-delay: 0.2s; }
+
+.library-grid .library-item:nth-child(1) { animation-delay: 0.02s; }
+.library-grid .library-item:nth-child(2) { animation-delay: 0.05s; }
+.library-grid .library-item:nth-child(3) { animation-delay: 0.08s; }
+.library-grid .library-item:nth-child(4) { animation-delay: 0.11s; }
+.library-grid .library-item:nth-child(n+5) { animation-delay: 0.14s; }
+
+@keyframes cardFadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ========== Smoother Button/Chip Transitions ========== */
+.nav-btn {
+    transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.filter-btn,
+.filter-chip {
+    transition: all var(--transition-fast);
+}
+
+.filter-btn:active,
+.filter-chip:active {
+    transform: scale(0.94);
+}
+
+/* ========== Skeleton Loading Shimmer ========== */
+.skeleton {
+    background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: var(--radius-sm);
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* ========== Nav Active Indicator Dot ========== */
+.nav-btn.active::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    box-shadow: 0 0 6px var(--accent-primary);
+}
+
+/* ========== Content Item Hover/Active Polish ========== */
+.content-item {
+    transition: background var(--transition-fast), transform 0.12s ease, border-color var(--transition-fast);
+}
+
+.content-item:active {
+    border-color: var(--accent-primary);
+}
+
+/* ========== Toast Entrance Polish ========== */
+.toast {
+    transition: all var(--transition-slow);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+/* ========== Detail Hero Image Parallax-like Shadow ========== */
+.detail-cover {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+/* ========== Search Bar Focus Animation ========== */
+.search-bar {
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.search-bar:focus-within {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ========== Continue Watching Card Polish ========== */
+.continue-item {
+    transition: transform var(--transition-fast);
+}
+
+.continue-item:active {
+    transform: scale(0.95);
+}
+
+/* ========== Download Progress Animation ========== */
+.dl-progress-fill {
+    transition: width 0.5s cubic-bezier(.4,0,.2,1);
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), var(--accent-primary));
+    background-size: 200% 100%;
+    animation: progressGlow 2s ease-in-out infinite;
+}
+
+@keyframes progressGlow {
+    0%, 100% { background-position: 0% 0; }
+    50% { background-position: 200% 0; }
+}
+
+/* ========== Badge Pulse for Active Downloads ========== */
+.nav-dl-badge.visible {
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+    0%, 100% { box-shadow: 0 1px 4px var(--accent-glow); }
+    50% { box-shadow: 0 1px 10px rgba(255,107,53,0.4); }
+}
+
+/* ========== Dialog Backdrop Blur ========== */
+.delete-dialog {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.dialog-content {
+    animation: dialogPop 0.25s cubic-bezier(.4,0,.2,1);
+}
+
+@keyframes dialogPop {
+    from { opacity: 0; transform: scale(0.92); }
+    to { opacity: 1; transform: scale(1); }
 }
