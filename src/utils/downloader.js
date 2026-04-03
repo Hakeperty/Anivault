@@ -219,26 +219,24 @@ class _DownloadManager {
         if (segments.length === 0) throw new Error('No video segments found in playlist');
         console.log(`[DL] Found ${segments.length} segments to download`);
 
-        // 5. Download all segments, building up a combined ArrayBuffer
+        // 5. Download all segments with retry logic
         const chunks = [];
         let totalBytes = 0;
+        let failedCount = 0;
         for (let i = 0; i < segments.length; i++) {
             if (this._aborted) throw new Error('Cancelled');
 
             try {
-                const resp = await fetch(segments[i], {
-                    headers: {
-                        'Referer': 'https://megacloud.blog/',
-                        'Origin': 'https://megacloud.blog'
-                    }
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const buf = await resp.arrayBuffer();
+                const buf = await this._fetchSegment(segments[i]);
                 chunks.push(buf);
                 totalBytes += buf.byteLength;
             } catch (e) {
+                failedCount++;
                 console.warn(`[DL] segment ${i + 1}/${segments.length} failed:`, e.message);
-                // Skip failed segments — video will have a gap but still be watchable
+                // If too many fail in a row, abort early
+                if (failedCount > 5 && chunks.length === 0) {
+                    throw new Error(`CDN blocked downloads (${e.message}). Try again later.`);
+                }
             }
 
             // Progress: 10–90% for segment downloads
@@ -272,15 +270,40 @@ class _DownloadManager {
 
     // ── Shared helpers ──
 
+    /** Standard headers that mimic a real browser (required by CDNs like crimsonstorm) */
+    _streamHeaders() {
+        return {
+            'Referer': 'https://megacloud.blog/',
+            'Origin': 'https://megacloud.blog',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+        };
+    }
+
     async _fetchText(url) {
-        const resp = await fetch(url, {
-            headers: {
-                'Referer': 'https://megacloud.blog/',
-                'Origin': 'https://megacloud.blog'
-            }
-        });
+        const resp = await fetch(url, { headers: this._streamHeaders() });
         if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching ${url}`);
         return resp.text();
+    }
+
+    /** Fetch a segment with retry (CDNs sometimes 403 on first try) */
+    async _fetchSegment(url, retries = 2) {
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                const resp = await fetch(url, { headers: this._streamHeaders() });
+                if (resp.ok) return resp.arrayBuffer();
+                if (resp.status === 403 && attempt < retries) {
+                    // Wait before retry — CDN rate limiting
+                    await new Promise(r => setTimeout(r, 500 + attempt * 500));
+                    continue;
+                }
+                throw new Error(`HTTP ${resp.status}`);
+            } catch (e) {
+                if (attempt >= retries) throw e;
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
     }
 
     async _fetchAsDataUrl(url) {
