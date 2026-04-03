@@ -141,15 +141,14 @@ export class PlayerScreen {
         loadingEl.style.display = '';
         errorEl.style.display = 'none';
 
-        // Safety timeout — if nothing loads in 25s, show error with retry
+        // Safety timeout — 40s total for all strategies
         const loadTimeout = setTimeout(() => {
             if (loadingEl.style.display !== 'none') {
                 this._showError('Stream is taking too long. Tap Retry.');
             }
-        }, 25000);
+        }, 40000);
 
         try {
-            // Update loading text
             const loadingText = loadingEl.querySelector('p');
             if (loadingText) loadingText.textContent = 'Finding stream…';
 
@@ -162,93 +161,86 @@ export class PlayerScreen {
             // Iframe embed mode — show embed in full-screen iframe
             if (streamData.type === 'iframe' && iframe) {
                 clearTimeout(loadTimeout);
-                video.style.display = 'none';
-                document.getElementById('player-controls')?.style.setProperty('display', 'none');
-                document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
-
-                iframe.style.display = 'block';
-                document.getElementById('iframe-controls').style.display = 'flex';
-                iframe.src = streamData.url;
-
-                let overlayTimer = setTimeout(() => {
-                    document.getElementById('iframe-controls').style.display = 'none';
-                }, 5000);
-                iframe.parentElement.addEventListener('click', (e) => {
-                    if (e.target === iframe) return;
-                    const ctrl = document.getElementById('iframe-controls');
-                    if (ctrl) {
-                        const visible = ctrl.style.display !== 'none';
-                        ctrl.style.display = visible ? 'none' : 'flex';
-                        clearTimeout(overlayTimer);
-                        if (!visible) overlayTimer = setTimeout(() => { ctrl.style.display = 'none'; }, 5000);
-                    }
-                });
-
-                setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
+                this._showIframeEmbed(video, iframe, streamData.url, loadingEl);
                 return;
             }
 
             const streamUrl = streamData.url;
             if (loadingText) loadingText.textContent = 'Loading video…';
 
-            // Strategy 1: Try native HLS (Android WebView often supports it)
-            const nativeWorks = await this._tryNativeHls(video, streamUrl, loadTimeout);
-            if (nativeWorks) {
-                loadingEl.style.display = 'none';
-                this._setupControls(video);
-                this._startProgressSaving(video);
-                return;
-            }
-
-            // Strategy 2: Use HLS.js library
+            // Strategy 1: HLS.js with custom fetch loader (CORS bypass via CapacitorHttp)
             await this._loadHls();
 
             if (window.Hls && window.Hls.isSupported()) {
-                this.hls = new window.Hls({
-                    maxBufferLength: 30,
-                    maxMaxBufferLength: 60,
-                    enableWorker: false,
-                    xhrSetup: (xhr) => {
-                        xhr.setRequestHeader('Referer', 'https://megacloud.blog/');
-                    }
-                });
-                this.hls.loadSource(streamUrl);
-                this.hls.attachMedia(video);
+                if (loadingText) loadingText.textContent = 'Starting playback…';
 
-                this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-                    clearTimeout(loadTimeout);
-                    loadingEl.style.display = 'none';
-                    this._restoreProgress(video);
-                    video.play().catch(() => {});
-                });
+                const hlsOk = await new Promise((resolve) => {
+                    this.hls = new window.Hls({
+                        maxBufferLength: 30,
+                        maxMaxBufferLength: 60,
+                        enableWorker: false,
+                        loader: this._createFetchLoader(),
+                    });
+                    this.hls.loadSource(streamUrl);
+                    this.hls.attachMedia(video);
 
-                this.hls.on(window.Hls.Events.ERROR, (_e, data) => {
-                    if (data.fatal) {
-                        console.error('HLS fatal error', data);
-                        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
-                            this.hls.startLoad();
-                        } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
-                            this.hls.recoverMediaError();
-                        } else {
-                            clearTimeout(loadTimeout);
-                            this._showError('Playback error. Try again.');
+                    const hlsTimer = setTimeout(() => resolve(false), 20000);
+                    let networkRetried = false;
+
+                    this.hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+                        clearTimeout(hlsTimer);
+                        resolve(true);
+                    });
+
+                    this.hls.on(window.Hls.Events.ERROR, (_e, data) => {
+                        if (data.fatal) {
+                            console.error('HLS.js error:', data.type, data.details);
+                            if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && !networkRetried) {
+                                networkRetried = true;
+                                this.hls.startLoad();
+                            } else {
+                                clearTimeout(hlsTimer);
+                                resolve(false);
+                            }
                         }
-                    }
+                    });
                 });
-            } else {
-                // Strategy 3: Direct src assignment (last resort)
-                video.src = streamUrl;
-                video.addEventListener('loadedmetadata', () => {
+
+                if (hlsOk) {
                     clearTimeout(loadTimeout);
                     loadingEl.style.display = 'none';
                     this._restoreProgress(video);
                     video.play().catch(() => {});
-                }, { once: true });
-                video.addEventListener('error', () => {
-                    clearTimeout(loadTimeout);
-                    this._showError('Cannot play this stream format.');
-                }, { once: true });
+                    this._setupControls(video);
+                    this._startProgressSaving(video);
+                    return;
+                }
+
+                // HLS.js failed — clean up
+                this.hls.destroy();
+                this.hls = null;
             }
+
+            // Strategy 2: Iframe embed fallback (guaranteed to work — MegaCloud has its own player)
+            if (streamData.embedUrl && iframe) {
+                clearTimeout(loadTimeout);
+                if (loadingText) loadingText.textContent = 'Trying embed player…';
+                this._showIframeEmbed(video, iframe, streamData.embedUrl, loadingEl);
+                return;
+            }
+
+            // Strategy 3: Direct src assignment (last resort)
+            video.src = streamUrl;
+            video.addEventListener('loadedmetadata', () => {
+                clearTimeout(loadTimeout);
+                loadingEl.style.display = 'none';
+                this._restoreProgress(video);
+                video.play().catch(() => {});
+            }, { once: true });
+            video.addEventListener('error', () => {
+                clearTimeout(loadTimeout);
+                this._showError('Cannot play this stream. Tap Retry.');
+            }, { once: true });
 
             this._setupControls(video);
             this._startProgressSaving(video);
@@ -260,49 +252,97 @@ export class PlayerScreen {
     }
 
     /**
-     * Try playing m3u8 natively via video.src (works on many Android WebViews)
-     * Returns true if playback starts within 8s, false otherwise.
+     * Custom HLS.js loader using fetch API (patched by CapacitorHttp for CORS bypass).
+     * The default XHR loader fails because Referer is a forbidden header in browsers.
+     * CapacitorHttp patches window.fetch() to go through native Android HTTP — no CORS.
      */
-    _tryNativeHls(video, url, parentTimeout) {
-        return new Promise((resolve) => {
-            // Check if the WebView can play HLS natively
-            if (!video.canPlayType('application/vnd.apple.mpegurl') &&
-                !video.canPlayType('application/x-mpegURL')) {
-                return resolve(false);
+    _createFetchLoader() {
+        return class {
+            constructor(config) {
+                this._controller = null;
             }
 
-            const cleanup = () => {
-                video.removeEventListener('loadedmetadata', onLoad);
-                video.removeEventListener('error', onError);
-                clearTimeout(timer);
-            };
+            load(context, config, callbacks) {
+                this._controller = new AbortController();
+                const { url, responseType } = context;
 
-            const onLoad = () => {
-                cleanup();
-                clearTimeout(parentTimeout);
-                this._restoreProgress(video);
-                video.play().catch(() => {});
-                resolve(true);
-            };
+                const timeout = setTimeout(() => {
+                    this._controller?.abort();
+                    callbacks.onTimeout(
+                        { trequest: performance.now(), retry: 0 },
+                        context, null
+                    );
+                }, config.timeout || 15000);
 
-            const onError = () => {
-                cleanup();
-                video.removeAttribute('src');
-                video.load();
-                resolve(false);
-            };
+                fetch(url, {
+                    signal: this._controller.signal,
+                    headers: {
+                        'Referer': 'https://megacloud.blog/',
+                        'Origin': 'https://megacloud.blog',
+                    }
+                })
+                .then(async (resp) => {
+                    clearTimeout(timeout);
+                    if (!resp.ok) {
+                        callbacks.onError(
+                            { code: resp.status, text: `HTTP ${resp.status}` },
+                            context, null
+                        );
+                        return;
+                    }
+                    const data = responseType === 'arraybuffer'
+                        ? await resp.arrayBuffer()
+                        : await resp.text();
+                    const len = data.byteLength || data.length || 0;
+                    callbacks.onSuccess(
+                        { url: resp.url || url, data },
+                        { trequest: performance.now(), tfirst: performance.now(),
+                          tload: performance.now(), loaded: len, total: len, retry: 0 },
+                        context, null
+                    );
+                })
+                .catch((err) => {
+                    clearTimeout(timeout);
+                    if (err.name === 'AbortError') return;
+                    callbacks.onError(
+                        { code: 0, text: err.message || 'Fetch failed' },
+                        context, null
+                    );
+                });
+            }
 
-            const timer = setTimeout(() => {
-                cleanup();
-                video.removeAttribute('src');
-                video.load();
-                resolve(false);
-            }, 8000);
+            abort() { this._controller?.abort(); }
+            destroy() { this.abort(); }
+        };
+    }
 
-            video.addEventListener('loadedmetadata', onLoad, { once: true });
-            video.addEventListener('error', onError, { once: true });
-            video.src = url;
+    /**
+     * Show iframe embed player (used for direct iframe streams and as HLS fallback).
+     */
+    _showIframeEmbed(video, iframe, embedUrl, loadingEl) {
+        video.style.display = 'none';
+        document.getElementById('player-controls')?.style.setProperty('display', 'none');
+        document.getElementById('player-skip-intro')?.style.setProperty('display', 'none');
+
+        iframe.style.display = 'block';
+        document.getElementById('iframe-controls').style.display = 'flex';
+        iframe.src = embedUrl;
+
+        let overlayTimer = setTimeout(() => {
+            document.getElementById('iframe-controls').style.display = 'none';
+        }, 5000);
+        iframe.parentElement.addEventListener('click', (e) => {
+            if (e.target === iframe) return;
+            const ctrl = document.getElementById('iframe-controls');
+            if (ctrl) {
+                const visible = ctrl.style.display !== 'none';
+                ctrl.style.display = visible ? 'none' : 'flex';
+                clearTimeout(overlayTimer);
+                if (!visible) overlayTimer = setTimeout(() => { ctrl.style.display = 'none'; }, 5000);
+            }
         });
+
+        setTimeout(() => { loadingEl.style.display = 'none'; }, 3000);
     }
 
     _showError(msg) {

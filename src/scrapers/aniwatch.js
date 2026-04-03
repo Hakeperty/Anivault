@@ -253,7 +253,7 @@ export class AniWatchScraper {
                     if (link.includes('megacloud') || link.includes('embed')) {
                         const m3u8 = await this._extractMegacloudStream(link);
                         if (m3u8) {
-                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks };
+                            return { url: m3u8.url, quality: 'auto', type: 'hls', episodeId: cleanId, tracks: m3u8.tracks, embedUrl: link };
                         }
                     }
 
