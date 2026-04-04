@@ -211,7 +211,7 @@ export class SearchCoordinator {
         return best;
     }
 
-    static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '') {
+    static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '', mangaTitle = '') {
         const normalizedSource = String(source || '').toLowerCase();
         const katanaTarget = mangaUrl || mangaId;
 
@@ -232,9 +232,23 @@ export class SearchCoordinator {
             try {
                 console.log('[Coordinator] Trying fallback chapter source for', mangaId);
                 if (normalizedSource === 'mangakatana') {
-                    chapters = await MangaDexScraper.getChapters(mangaId);
+                    // MangaKatana failed → try MangaDex by searching title
+                    if (mangaTitle) {
+                        const mdexResults = await MangaDexScraper.search(mangaTitle);
+                        const match = this._bestMangaMatch(mdexResults, mangaTitle);
+                        if (match) chapters = await MangaDexScraper.getChapters(match.id);
+                    } else {
+                        chapters = await MangaDexScraper.getChapters(mangaId);
+                    }
                 } else {
-                    chapters = await MangaKatanaScraper.getChapters(katanaTarget);
+                    // MangaDex failed → search MangaKatana by title
+                    if (mangaTitle) {
+                        const katanaResults = await MangaKatanaScraper.search(mangaTitle);
+                        const match = this._bestMangaMatch(katanaResults, mangaTitle);
+                        if (match) chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
+                    } else if (katanaTarget.startsWith('http') || katanaTarget.startsWith('/')) {
+                        chapters = await MangaKatanaScraper.getChapters(katanaTarget);
+                    }
                 }
             } catch (fallbackErr) {
                 console.error('Fallback chapter source also failed:', fallbackErr.message);
@@ -244,7 +258,7 @@ export class SearchCoordinator {
         return chapters || [];
     }
 
-    static async getChapterPages(chapterId, source = 'mangakatana') {
+    static async getChapterPages(chapterId, source = 'mangakatana', mangaTitle = '', chapterNumber = null) {
         const normalizedSource = String(source || '').toLowerCase();
         const normalizePages = (pages) => (pages || [])
             .map((page) => (typeof page === 'string' ? page : page?.url))
@@ -262,21 +276,87 @@ export class SearchCoordinator {
             console.warn('Primary page source failed:', source, error.message);
         }
 
-        // Fallback to secondary source if primary returned nothing
-        if (!pages || pages.length === 0) {
+        // If primary returned pages, we're done
+        if (pages && pages.length > 0) return pages;
+
+        // Smart cross-source fallback: search the other source by manga title + chapter number
+        if (mangaTitle && chapterNumber !== null) {
+            console.log(`[Coordinator] Cross-source page fallback: "${mangaTitle}" ch.${chapterNumber}`);
             try {
-                console.log('[Coordinator] Trying fallback page source for', chapterId);
-                if (normalizedSource === 'mangakatana') {
-                    pages = normalizePages(await MangaDexScraper.getPages(chapterId));
-                } else {
-                    pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
-                }
-            } catch (fallbackErr) {
-                console.error('Fallback page source also failed:', fallbackErr.message);
+                const fallbackPages = await this._crossSourcePageFallback(
+                    normalizedSource, mangaTitle, chapterNumber
+                );
+                if (fallbackPages.length > 0) return fallbackPages;
+            } catch (e) {
+                console.warn('[Coordinator] Cross-source fallback failed:', e.message);
             }
         }
 
+        // Last resort: try passing ID directly to other source (may work for URL-based IDs)
+        try {
+            if (normalizedSource === 'mangakatana') {
+                pages = normalizePages(await MangaDexScraper.getPages(chapterId));
+            } else {
+                pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
+            }
+        } catch (_) {}
+
         return pages || [];
+    }
+
+    /**
+     * Cross-source page fallback: search the alternate source for the same manga,
+     * find a matching chapter by number, and load pages from it.
+     */
+    static async _crossSourcePageFallback(failedSource, mangaTitle, chapterNumber) {
+        const normalizePages = (pages) => (pages || [])
+            .map((page) => (typeof page === 'string' ? page : page?.url))
+            .filter(Boolean);
+
+        if (failedSource === 'mangadex') {
+            // MangaDex failed → try MangaKatana
+            const searchResults = await MangaKatanaScraper.search(mangaTitle);
+            if (!searchResults.length) return [];
+
+            // Find best title match
+            const match = this._bestMangaMatch(searchResults, mangaTitle);
+            if (!match) return [];
+
+            const chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
+            const targetCh = chapters.find(ch => ch.chapter === chapterNumber);
+            if (!targetCh) return [];
+
+            console.log(`[Coordinator] Found MangaKatana fallback: ${targetCh.url || targetCh.id}`);
+            return normalizePages(await MangaKatanaScraper.getPages(targetCh.url || targetCh.id));
+        } else {
+            // MangaKatana failed → try MangaDex
+            const searchResults = await MangaDexScraper.search(mangaTitle);
+            if (!searchResults.length) return [];
+
+            const match = this._bestMangaMatch(searchResults, mangaTitle);
+            if (!match) return [];
+
+            const chapters = await MangaDexScraper.getChapters(match.id);
+            const targetCh = chapters.find(ch => ch.chapter === chapterNumber);
+            if (!targetCh) return [];
+
+            console.log(`[Coordinator] Found MangaDex fallback: ${targetCh.id}`);
+            return normalizePages(await MangaDexScraper.getPages(targetCh.id));
+        }
+    }
+
+    /** Find best manga title match from search results */
+    static _bestMangaMatch(results, title) {
+        const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const target = normalize(title);
+        // Exact match first
+        const exact = results.find(r => normalize(r.title) === target);
+        if (exact) return exact;
+        // Substring match
+        const partial = results.find(r =>
+            normalize(r.title).includes(target) || target.includes(normalize(r.title))
+        );
+        return partial || results[0]; // fall back to first result
     }
 
     static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch', audioType = null) {

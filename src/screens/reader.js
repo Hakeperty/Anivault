@@ -115,7 +115,9 @@ export class ReaderScreen {
         try {
             const chapterId = this.chapter?.id;
             const source = this.chapter?.source || this.libraryItem?.source || 'mangakatana';
-            this.pages = await SearchCoordinator.getChapterPages(chapterId, source);
+            const mangaTitle = this.libraryItem?.title || '';
+            const chapterNumber = this.chapter?.chapter ?? null;
+            this.pages = await SearchCoordinator.getChapterPages(chapterId, source, mangaTitle, chapterNumber);
 
             if (!this.pages || this.pages.length === 0) {
                 this.showLoadError('No pages found for this chapter');
