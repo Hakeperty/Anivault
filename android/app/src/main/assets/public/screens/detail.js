@@ -354,11 +354,21 @@ export class DetailScreen {
 
     renderChapters(container) {
         if (this.chapters.length === 0) {
-            container.innerHTML = '<p class="content-empty">No chapters found</p>';
+            container.innerHTML = `
+                <p class="content-empty">No chapters found</p>
+                <button id="report-wrong-match" class="btn btn-secondary" style="margin:12px auto;display:block;font-size:13px;padding:8px 16px;">
+                    ⚠ Report Wrong Manga Match
+                </button>`;
+            this._attachReportBtn();
             return;
         }
 
-        container.innerHTML = this.chapters.map(ch => {
+        // Add report button at the top of chapter list
+        const reportHtml = `<button id="report-wrong-match" class="btn btn-secondary" style="margin:0 0 12px 0;font-size:12px;padding:6px 12px;opacity:0.7;">
+            ⚠ Wrong manga? Report
+        </button>`;
+
+        container.innerHTML = reportHtml + this.chapters.map(ch => {
             const chNum = ch.chapter !== null && ch.chapter !== undefined ? ch.chapter : '?';
             return `
             <div class="content-item" data-chapter="${ch.chapter ?? ch.id}" data-id="${ch.id}">
@@ -392,6 +402,60 @@ export class DetailScreen {
                 }
             });
         });
+
+        this._attachReportBtn();
+    }
+
+    _attachReportBtn() {
+        document.getElementById('report-wrong-match')?.addEventListener('click', () => this._reportWrongMatch());
+    }
+
+    async _reportWrongMatch() {
+        const REPORT_URL = 'https://jsonblob.com/api/jsonBlob/019d5a40-7db9-7b20-a5f6-7df117b5b5a1';
+        const btn = document.getElementById('report-wrong-match');
+        if (btn) { btn.textContent = 'Reporting...'; btn.disabled = true; }
+
+        try {
+            const report = {
+                title: this.item.title,
+                titleEnglish: this.item.titleEnglish || '',
+                id: this.item.id,
+                source: this.item.source || this.source || '',
+                type: this.item.type || 'manga',
+                chaptersFound: this.chapters.length,
+                timestamp: Date.now(),
+                userAgent: navigator.userAgent?.substring(0, 80) || ''
+            };
+
+            // Fetch current reports
+            let current;
+            const plugin = window.Capacitor?.Plugins?.CapacitorHttp || window.Capacitor?.Plugins?.Http;
+            if (plugin) {
+                const resp = await plugin.request({ method: 'GET', url: REPORT_URL, headers: { 'Accept': 'application/json' } });
+                current = typeof resp.data === 'object' ? resp.data : JSON.parse(resp.data);
+            } else {
+                current = await (await fetch(REPORT_URL)).json();
+            }
+
+            if (!current.reports) current.reports = [];
+            // Avoid duplicate reports for same title
+            if (!current.reports.some(r => r.title === report.title && Date.now() - r.timestamp < 86400000)) {
+                current.reports.push(report);
+
+                if (plugin) {
+                    await plugin.request({ method: 'PUT', url: REPORT_URL, headers: { 'Content-Type': 'application/json' }, data: current });
+                } else {
+                    await fetch(REPORT_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(current) });
+                }
+            }
+
+            if (btn) { btn.textContent = '✓ Reported'; btn.style.opacity = '0.5'; }
+            showToast('Wrong match reported — it will be fixed soon!', 'success');
+        } catch (e) {
+            console.error('[Detail] Report failed:', e);
+            if (btn) { btn.textContent = '⚠ Report Failed'; btn.disabled = false; }
+            showToast('Report failed: ' + e.message, 'error');
+        }
     }
 
     /** Async badge: marks episodes that have been downloaded for offline use */
