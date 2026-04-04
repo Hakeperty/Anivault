@@ -215,6 +215,7 @@ export class SearchScreen {
                     item: {
                         id: item.id,
                         title: item.title,
+                        titleEnglish: item.titleEnglish || '',
                         coverImage: item.coverImage || item.coverUrl || '',
                         description: item.description || '',
                         type: item.type || type,

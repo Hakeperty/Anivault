@@ -13,7 +13,7 @@ const SETTING_DEFAULTS = {
     autoplayNext: 'on',
     contentType: 'both',
     readerMode: 'page',
-    nsfwFilter: 'off',
+    nsfwFilter: 'on',
     discoverCache: '10'
 };
 

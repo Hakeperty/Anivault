@@ -417,6 +417,7 @@ export class DiscoverScreen {
                         item: {
                             id: item.id,
                             title: item.title,
+                            titleEnglish: item.titleEnglish || '',
                             coverImage: item.coverImage || '',
                             description: item.description || '',
                             type: item.type || type,

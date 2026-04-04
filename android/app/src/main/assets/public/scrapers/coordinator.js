@@ -283,6 +283,8 @@ export class SearchCoordinator {
                             console.log('[Coordinator] Retrying MangaKatana with alt title:', altTitle);
                             katanaResults = await MangaKatanaScraper.search(altTitle);
                             match = this._bestMangaMatch(katanaResults, altTitle);
+                            // MangaKatana may return Japanese-titled results for English searches
+                            if (!match) match = this._bestMangaMatch(katanaResults, mangaTitle);
                         }
 
                         if (match) chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
@@ -362,6 +364,8 @@ export class SearchCoordinator {
             if (!match && altTitle && altTitle !== mangaTitle) {
                 searchResults = await MangaKatanaScraper.search(altTitle);
                 match = this._bestMangaMatch(searchResults, altTitle);
+                // MangaKatana may return Japanese-titled results for English searches
+                if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
             }
             if (!match) return [];
 
