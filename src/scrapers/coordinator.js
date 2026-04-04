@@ -11,6 +11,7 @@ import { MangaDexScraper } from './mangadex.js';
 import { MangaKatanaScraper } from './mangakatana.js';
 import { MangaPillScraper } from './mangapill.js';
 import { JikanScraper } from './jikan.js';
+import { aiMatcher } from '../utils/ai-matcher.js';
 
 export class SearchCoordinator {
     /**
@@ -158,12 +159,12 @@ export class SearchCoordinator {
         }
     }
 
-    /** Search AniWatch by title and get episodes from best match */
+    /** Search AniWatch by title and get episodes from best match (AI-enhanced) */
     static async _searchAndMatchEpisodes(title, expectedEps) {
         try {
             const searchResults = await AniWatchScraper.search(title);
             if (searchResults.length > 0) {
-                const bestMatch = this._findBestMatch(searchResults, title, expectedEps);
+                const bestMatch = await this._findBestMatchAI(searchResults, title, expectedEps);
                 if (bestMatch?.id) {
                     const eps = await AniWatchScraper.getEpisodes(bestMatch.id);
                     if (eps.length > 0) return eps;
@@ -182,12 +183,44 @@ export class SearchCoordinator {
      */
     static _findBestMatch(results, title, expectedEps = null) {
         if (!results || results.length === 0) return null;
+        const { best, bestScore } = this._scoreBestMatch(results, title, expectedEps);
+        if (bestScore < 25) {
+            console.warn(`[Coordinator] No good AniWatch match for "${title}" (best score: ${bestScore.toFixed(1)})`);
+            return null;
+        }
+        return best;
+    }
 
+    /**
+     * AI-enhanced anime matching — uses local scoring first, asks AI when uncertain.
+     * Call this instead of _findBestMatch when async is acceptable.
+     */
+    static async _findBestMatchAI(results, title, expectedEps = null) {
+        if (!results || results.length === 0) return null;
+        const { best, bestScore } = this._scoreBestMatch(results, title, expectedEps);
+
+        // High-confidence local match → trust it
+        if (best && bestScore >= 80) return best;
+
+        // Low confidence or no match → ask AI
+        try {
+            const aiResult = await aiMatcher.enhancedAnimeMatch(results, title, expectedEps, best, bestScore);
+            if (aiResult) return aiResult;
+        } catch (e) {
+            console.warn('[Coordinator] AI anime match failed:', e.message);
+        }
+
+        // Fallback to local result
+        if (bestScore >= 25) return best;
+        return null;
+    }
+
+    /** Core scoring logic for anime matching (extracted for reuse) */
+    static _scoreBestMatch(results, title, expectedEps = null) {
         const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const targetNorm = normalize(title);
         const targetWords = (title || '').toLowerCase().match(/[a-z0-9]+/g) || [];
 
-        // Extract season number from title (e.g. "... 2", "... Season 3")
         const seasonMatch = title.match(/(?:\s+(\d)$|\s+season\s*(\d+)|\s+(\d+)(?:st|nd|rd|th)\s+season)/i);
         const targetSeason = seasonMatch ? parseInt(seasonMatch[1] || seasonMatch[2] || seasonMatch[3]) : null;
 
@@ -199,70 +232,43 @@ export class SearchCoordinator {
             const rNorm = normalize(r.title);
             const rWords = (r.title || '').toLowerCase().match(/[a-z0-9]+/g) || [];
 
-            // Exact title match
             if (rNorm === targetNorm) {
                 score += 100;
             } else if (rNorm.includes(targetNorm) || targetNorm.includes(rNorm)) {
                 score += 50;
             } else {
-                // Word overlap scoring
                 const overlap = targetWords.filter(w => rWords.includes(w)).length;
                 const maxWords = Math.max(targetWords.length, rWords.length, 1);
-                const overlapRatio = overlap / maxWords;
-                score += overlapRatio * 80;
+                score += (overlap / maxWords) * 80;
             }
 
-            // Season number matching — critical for sequels
             if (targetSeason) {
                 const rSeasonMatch = r.title?.match(/(?:\s+(\d)$|\s+season\s*(\d+)|\s+(\d+)(?:st|nd|rd|th)\s+season)/i);
                 const rSeason = rSeasonMatch ? parseInt(rSeasonMatch[1] || rSeasonMatch[2] || rSeasonMatch[3]) : null;
-                if (rSeason === targetSeason) {
-                    score += 50; // strong season match
-                } else if (rSeason && rSeason !== targetSeason) {
-                    score -= 60; // wrong season — heavy penalty
-                } else if (!rSeason && targetSeason > 1) {
-                    score -= 30; // looking for S2+ but result has no season marker
-                }
+                if (rSeason === targetSeason) score += 50;
+                else if (rSeason && rSeason !== targetSeason) score -= 60;
+                else if (!rSeason && targetSeason > 1) score -= 30;
             }
 
-            // Episode count — lenient for airing shows (AniWatch may have fewer)
             const rEpCount = r.episodes?.sub || r.episodes?.total || 0;
             if (expectedEps && rEpCount) {
-                if (rEpCount === expectedEps) {
-                    score += 40;
-                } else if (rEpCount < expectedEps) {
-                    // AniWatch has fewer — likely airing, don't penalize much
-                    score += 10;
-                } else if (Math.abs(rEpCount - expectedEps) <= 2) {
-                    score += 20;
-                } else {
-                    // AniWatch has MORE eps than expected — wrong show
-                    score -= 40;
-                }
+                if (rEpCount === expectedEps) score += 40;
+                else if (rEpCount < expectedEps) score += 10;
+                else if (Math.abs(rEpCount - expectedEps) <= 2) score += 20;
+                else score -= 40;
             }
 
-            // Type hint: movies get bonus if expected eps is 1
             const rType = (r.animeType || '').toLowerCase();
             if (expectedEps === 1 && rType === 'movie') score += 30;
             if (expectedEps === 1 && rType === 'tv') score -= 20;
 
-            // Prefer results where the title is closer in length
             const lenDiff = Math.abs(rNorm.length - targetNorm.length);
             score -= lenDiff * 0.3;
 
-            if (score > bestScore) {
-                bestScore = score;
-                best = r;
-            }
+            if (score > bestScore) { bestScore = score; best = r; }
         }
 
-        // Minimum quality threshold — reject bad matches
-        if (bestScore < 25) {
-            console.warn(`[Coordinator] No good AniWatch match for "${title}" (best score: ${bestScore.toFixed(1)})`);
-            return null;
-        }
-
-        return best;
+        return { best, bestScore };
     }
 
     static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '', mangaTitle = '', altTitle = '') {
@@ -291,15 +297,13 @@ export class SearchCoordinator {
                     // MangaKatana failed → try MangaDex by searching title
                     if (mangaTitle) {
                         const mdexResults = await MangaDexScraper.search(mangaTitle);
-                        const match = this._bestMangaMatch(mdexResults, mangaTitle);
+                        const match = await this._bestMangaMatchAI(mdexResults, mangaTitle);
                         if (match) chapters = await MangaDexScraper.getChapters(match.id);
                     } else {
                         chapters = await MangaDexScraper.getChapters(mangaId);
                     }
                 } else {
                     // MangaDex failed → search MangaKatana by title
-                    // Search with English title (MangaKatana works better with English)
-                    // but always match against BOTH titles — JP title is more specific
                     if (mangaTitle) {
                         let katanaResults;
                         let match = null;
@@ -307,16 +311,21 @@ export class SearchCoordinator {
                         if (altTitle && altTitle !== mangaTitle) {
                             console.log('[Coordinator] Trying MangaKatana with English title:', altTitle);
                             katanaResults = await MangaKatanaScraper.search(altTitle);
-                            // Try JP title first (more specific match), then EN title
                             match = this._bestMangaMatch(katanaResults, mangaTitle) ||
                                 this._bestMangaMatch(katanaResults, altTitle);
+                            // AI fallback if local matching uncertain
+                            if (!match && katanaResults.length > 0) {
+                                match = await this._bestMangaMatchAI(katanaResults, mangaTitle);
+                            }
                         }
 
-                        // Then try searching with romaji/Japanese title
                         if (!match) {
                             katanaResults = await MangaKatanaScraper.search(mangaTitle);
                             match = this._bestMangaMatch(katanaResults, mangaTitle);
                             if (!match && altTitle) match = this._bestMangaMatch(katanaResults, altTitle);
+                            if (!match && katanaResults.length > 0) {
+                                match = await this._bestMangaMatchAI(katanaResults, mangaTitle);
+                            }
                         }
 
                         // Last resort: look up English title via Jikan
@@ -328,6 +337,9 @@ export class SearchCoordinator {
                                     katanaResults = await MangaKatanaScraper.search(englishTitle);
                                     match = this._bestMangaMatch(katanaResults, englishTitle);
                                     if (!match) match = this._bestMangaMatch(katanaResults, mangaTitle);
+                                    if (!match && katanaResults.length > 0) {
+                                        match = await this._bestMangaMatchAI(katanaResults, mangaTitle);
+                                    }
                                 }
                             } catch (e) {
                                 console.warn('[Coordinator] Jikan title lookup failed:', e.message);
@@ -363,9 +375,12 @@ export class SearchCoordinator {
                 for (const term of searchTerms) {
                     const pillResults = await MangaPillScraper.search(term);
                     // JP title first (most specific), then search term, then EN
-                    const match = this._bestMangaMatch(pillResults, mangaTitle) ||
+                    let match = this._bestMangaMatch(pillResults, mangaTitle) ||
                         (term !== mangaTitle ? this._bestMangaMatch(pillResults, term) : null) ||
                         (altTitle && altTitle !== mangaTitle ? this._bestMangaMatch(pillResults, altTitle) : null);
+                    if (!match && pillResults.length > 0) {
+                        match = await this._bestMangaMatchAI(pillResults, mangaTitle);
+                    }
                     if (match) {
                         chapters = await MangaPillScraper.getChapters(match.url || match.id);
                         if (chapters.length > 0) {
@@ -439,10 +454,12 @@ export class SearchCoordinator {
                 const searchTerms = [mangaTitle, altTitle].filter(Boolean);
                 for (const term of searchTerms) {
                     const pillResults = await MangaPillScraper.search(term);
-                    // JP title first (most specific), then search term, then EN
-                    const match = this._bestMangaMatch(pillResults, mangaTitle) ||
+                    let match = this._bestMangaMatch(pillResults, mangaTitle) ||
                         (term !== mangaTitle ? this._bestMangaMatch(pillResults, term) : null) ||
                         (altTitle && altTitle !== mangaTitle ? this._bestMangaMatch(pillResults, altTitle) : null);
+                    if (!match && pillResults.length > 0) {
+                        match = await this._bestMangaMatchAI(pillResults, mangaTitle);
+                    }
                     if (match) {
                         const chapters = await MangaPillScraper.getChapters(match.url || match.id);
                         const targetCh = chapters.find(ch => ch.chapter === chapterNumber);
@@ -470,21 +487,26 @@ export class SearchCoordinator {
             .filter(Boolean);
 
         if (failedSource === 'mangadex') {
-            // MangaDex failed → try MangaKatana (English title first, more reliable)
+            // MangaDex failed → try MangaKatana
             let searchResults;
             let match = null;
 
             if (altTitle && altTitle !== mangaTitle) {
                 searchResults = await MangaKatanaScraper.search(altTitle);
-                // JP title first (more specific), then EN as fallback
                 match = this._bestMangaMatch(searchResults, mangaTitle) ||
                     this._bestMangaMatch(searchResults, altTitle);
+                if (!match && searchResults.length > 0) {
+                    match = await this._bestMangaMatchAI(searchResults, mangaTitle);
+                }
             }
 
             if (!match) {
                 searchResults = await MangaKatanaScraper.search(mangaTitle);
                 match = this._bestMangaMatch(searchResults, mangaTitle);
                 if (!match && altTitle) match = this._bestMangaMatch(searchResults, altTitle);
+                if (!match && searchResults.length > 0) {
+                    match = await this._bestMangaMatchAI(searchResults, mangaTitle);
+                }
             }
 
             // If altTitle is missing, try deriving English title via Jikan
@@ -513,13 +535,11 @@ export class SearchCoordinator {
             let searchResults = await MangaDexScraper.search(mangaTitle);
             let match = this._bestMangaMatch(searchResults, mangaTitle);
 
-            // Retry with English alt title if Japanese title didn't match
             if (!match && altTitle && altTitle !== mangaTitle) {
                 searchResults = await MangaDexScraper.search(altTitle);
                 match = this._bestMangaMatch(searchResults, altTitle);
                 if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
             }
-            // If altTitle is missing, try deriving English title via Jikan
             if (!match && !altTitle && mangaTitle) {
                 try {
                     const englishTitle = await this._lookupEnglishTitle(mangaTitle);
@@ -531,6 +551,10 @@ export class SearchCoordinator {
                 } catch (e) {
                     console.warn('[Coordinator] Jikan title lookup failed:', e.message);
                 }
+            }
+            // AI fallback if all local matching failed
+            if (!match && searchResults && searchResults.length > 0) {
+                match = await this._bestMangaMatchAI(searchResults, mangaTitle);
             }
             if (!match) return [];
 
@@ -609,7 +633,36 @@ export class SearchCoordinator {
      */
     static _bestMangaMatch(results, title) {
         if (!results || results.length === 0) return null;
+        const { best, bestScore, bestOverlap } = this._scoreBestManga(results, title);
+        if (best && (bestScore >= 80 || bestOverlap >= 0.5)) return best;
+        return null;
+    }
 
+    /**
+     * AI-enhanced manga matching — uses local scoring first, asks AI when uncertain.
+     */
+    static async _bestMangaMatchAI(results, title) {
+        if (!results || results.length === 0) return null;
+        const { best, bestScore, bestOverlap } = this._scoreBestManga(results, title);
+
+        // High-confidence local match → trust it
+        if (best && bestScore >= 120) return best;
+
+        // Low confidence or ambiguous → ask AI
+        try {
+            const aiResult = await aiMatcher.enhancedMangaMatch(results, title, best, bestScore);
+            if (aiResult) return aiResult;
+        } catch (e) {
+            console.warn('[Coordinator] AI manga match failed:', e.message);
+        }
+
+        // Fallback to local
+        if (best && (bestScore >= 80 || bestOverlap >= 0.5)) return best;
+        return null;
+    }
+
+    /** Core scoring logic for manga matching (extracted for reuse) */
+    static _scoreBestManga(results, title) {
         const targetNorm = this._normalizeTitle(title);
         const targetCompact = targetNorm.replace(/\s/g, '');
 
@@ -619,52 +672,42 @@ export class SearchCoordinator {
         for (const r of results) {
             const rNorm = this._normalizeTitle(r.title);
             const rCompact = rNorm.replace(/\s/g, '');
-            // Also check English alt title for matching
             const rEnNorm = r.titleEnglish ? this._normalizeTitle(r.titleEnglish) : '';
             const rEnCompact = rEnNorm.replace(/\s/g, '');
             let score = 0;
 
-            // Exact compact match (ignoring spaces/punctuation)
+            // Exact compact match (ignoring spaces/punctuation) — perfect
             if (rCompact === targetCompact || (rEnCompact && rEnCompact === targetCompact)) {
-                return r; // perfect match — short-circuit
+                return { best: r, bestScore: 200, bestOverlap: 1.0 };
             }
 
-            // Substring containment (check both primary and English title)
             if (rCompact.includes(targetCompact) || targetCompact.includes(rCompact) ||
                 (rEnCompact && (rEnCompact.includes(targetCompact) || targetCompact.includes(rEnCompact)))) {
                 score += 80;
             }
 
-            // Word overlap — use best of primary title and English title
             const overlap = this._wordOverlapScore(targetNorm, rNorm);
             const enOverlap = rEnNorm ? this._wordOverlapScore(targetNorm, rEnNorm) : 0;
             score += Math.max(overlap, enOverlap) * 100;
 
-            // Penalize large length differences (use closer title)
             const lenDiff = Math.min(
                 Math.abs(rCompact.length - targetCompact.length),
                 rEnCompact ? Math.abs(rEnCompact.length - targetCompact.length) : Infinity
             );
             score -= lenDiff * 0.5;
 
-            if (score > bestScore) {
-                bestScore = score;
-                best = r;
-            }
+            if (score > bestScore) { bestScore = score; best = r; }
         }
 
-        // Require at least 50% word overlap OR a containment match (score >= 80)
+        let bestOverlap = 0;
         if (best) {
-            const bestOverlap = Math.max(
+            bestOverlap = Math.max(
                 this._wordOverlapScore(targetNorm, this._normalizeTitle(best.title)),
                 best.titleEnglish ? this._wordOverlapScore(targetNorm, this._normalizeTitle(best.titleEnglish)) : 0
             );
-            if (bestScore >= 80 || bestOverlap >= 0.5) {
-                return best;
-            }
         }
 
-        return null; // no sufficiently good match — caller handles null
+        return { best, bestScore, bestOverlap };
     }
 
     static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch', audioType = null) {
