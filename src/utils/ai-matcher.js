@@ -6,8 +6,10 @@
  */
 
 const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const NVIDIA_API_KEY = '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';
 const NVIDIA_MODEL = 'z-ai/glm5';
+
+// API key loaded from localStorage at runtime — never hardcoded
+const AI_KEY_STORAGE = 'anivault_ai_api_key';
 
 const DDG_SEARCH_URL = 'https://api.duckduckgo.com/';
 const DDG_HTML_URL = 'https://html.duckduckgo.com/html/';
@@ -195,6 +197,13 @@ class AIMatcher {
     async askAI(query, candidates, contentType = 'anime', context = {}) {
         if (!candidates || candidates.length === 0) return null;
 
+        // Load API key from localStorage — skip AI if not configured
+        const apiKey = localStorage.getItem(AI_KEY_STORAGE);
+        if (!apiKey) {
+            console.log('[AIMatcher] No API key configured, skipping AI matching');
+            return null;
+        }
+
         // Build candidate list for the prompt
         const candidateList = candidates.map((c, i) => {
             const parts = [`${i + 1}. "${c.title}"`];
@@ -255,7 +264,7 @@ Respond with ONLY a JSON object (no markdown): {"pick": <number 1-N or 0>, "conf
                     url: NVIDIA_API_URL,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${NVIDIA_API_KEY}`
+                        'Authorization': `Bearer ${apiKey}`
                     },
                     data: body
                 });
@@ -267,7 +276,7 @@ Respond with ONLY a JSON object (no markdown): {"pick": <number 1-N or 0>, "conf
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${NVIDIA_API_KEY}`
+                        'Authorization': `Bearer ${apiKey}`
                     },
                     body: JSON.stringify(body)
                 });

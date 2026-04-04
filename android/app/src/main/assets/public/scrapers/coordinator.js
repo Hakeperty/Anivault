@@ -202,6 +202,10 @@ export class SearchCoordinator {
         // High-confidence local match → trust it
         if (best && bestScore >= 80) return best;
 
+        // Check if AI matching is enabled
+        const aiEnabled = (localStorage.getItem('anivault_settings_aiMatching') || 'on') !== 'off';
+        if (!aiEnabled) return bestScore >= 25 ? best : null;
+
         // Low confidence or no match → ask AI
         try {
             const aiResult = await aiMatcher.enhancedAnimeMatch(results, title, expectedEps, best, bestScore);
@@ -647,6 +651,10 @@ export class SearchCoordinator {
 
         // High-confidence local match → trust it
         if (best && bestScore >= 120) return best;
+
+        // Check if AI matching is enabled
+        const aiEnabled = (localStorage.getItem('anivault_settings_aiMatching') || 'on') !== 'off';
+        if (!aiEnabled) return (best && (bestScore >= 80 || bestOverlap >= 0.5)) ? best : null;
 
         // Low confidence or ambiguous → ask AI
         try {
