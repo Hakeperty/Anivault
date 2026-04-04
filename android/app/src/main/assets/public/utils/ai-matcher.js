@@ -19,10 +19,137 @@ const CACHE_KEY = 'anivault_match_cache';
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+// Community shared match database (jsonblob.com — free, no auth, read/write)
+const COMMUNITY_DB_URL = 'https://jsonblob.com/api/jsonBlob/019d5a38-435f-7b8f-a637-119b4b79ac6e';
+const COMMUNITY_SYNC_INTERVAL = 10 * 60 * 1000; // sync every 10 minutes
+const COMMUNITY_SYNC_KEY = 'anivault_community_last_sync';
+
 class AIMatcher {
     constructor() {
         this._cache = null;
-        this._pendingRequests = new Map(); // dedup concurrent identical requests
+        this._communityCache = null;
+        this._pendingRequests = new Map();
+        this._syncInProgress = false;
+        // Auto-sync community matches on startup
+        this._initCommunitySync();
+    }
+
+    // ─── Community Shared Match DB ──────────────────────────────────
+
+    /** Fetch community matches from cloud and merge into local cache */
+    async _initCommunitySync() {
+        try {
+            const lastSync = parseInt(localStorage.getItem(COMMUNITY_SYNC_KEY) || '0');
+            if (Date.now() - lastSync < COMMUNITY_SYNC_INTERVAL) {
+                console.log('[AIMatcher] Community DB synced recently, skipping');
+                return;
+            }
+            await this.syncCommunityMatches();
+        } catch (e) {
+            console.warn('[AIMatcher] Community sync init failed:', e.message);
+        }
+    }
+
+    /** Download community matches and merge into local cache */
+    async syncCommunityMatches() {
+        if (this._syncInProgress) return;
+        this._syncInProgress = true;
+        try {
+            console.log('[AIMatcher] Syncing community match database...');
+            const resp = await this._fetchWithTimeout(COMMUNITY_DB_URL, 8000);
+            if (!resp || !resp.matches) {
+                console.warn('[AIMatcher] Community DB empty or invalid');
+                return;
+            }
+
+            this._communityCache = resp;
+            const localCache = this._loadCache();
+            let merged = 0;
+
+            // Merge community matches into local cache (community entries don't overwrite local)
+            for (const [key, entry] of Object.entries(resp.matches)) {
+                if (!localCache.matches[key]) {
+                    localCache.matches[key] = { ...entry, method: 'community' };
+                    merged++;
+                }
+            }
+
+            if (merged > 0) {
+                this._saveCache();
+                console.log(`[AIMatcher] Merged ${merged} community matches into local cache`);
+            }
+
+            localStorage.setItem(COMMUNITY_SYNC_KEY, String(Date.now()));
+            console.log(`[AIMatcher] Community sync complete (${Object.keys(resp.matches).length} total community matches)`);
+        } catch (e) {
+            console.warn('[AIMatcher] Community sync failed:', e.message);
+        } finally {
+            this._syncInProgress = false;
+        }
+    }
+
+    /** Upload a resolved match to the community database */
+    async _contributeToCommunity(key, entry) {
+        try {
+            // Fetch current community DB
+            const current = await this._fetchWithTimeout(COMMUNITY_DB_URL, 5000);
+            if (!current || typeof current !== 'object') return;
+
+            // Only add if not already there, and only high-confidence matches
+            if (current.matches[key] || entry.confidence < 70) return;
+
+            current.matches[key] = {
+                matchedIndex: entry.matchedIndex,
+                matchedTitle: entry.matchedTitle,
+                confidence: entry.confidence,
+                method: entry.method,
+                timestamp: Date.now()
+            };
+            current.updated = new Date().toISOString();
+
+            // Write back to community DB
+            const plugin = window.Capacitor?.Plugins?.CapacitorHttp || window.Capacitor?.Plugins?.Http;
+            if (plugin) {
+                await plugin.request({
+                    method: 'PUT',
+                    url: COMMUNITY_DB_URL,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: current
+                });
+            } else {
+                await fetch(COMMUNITY_DB_URL, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(current)
+                });
+            }
+            console.log(`[AIMatcher] Contributed "${entry.matchedTitle}" to community DB`);
+        } catch (e) {
+            // Non-critical: silently fail community contribution
+            console.debug('[AIMatcher] Community contribution failed:', e.message);
+        }
+    }
+
+    async _fetchWithTimeout(url, timeoutMs = 5000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const plugin = window.Capacitor?.Plugins?.CapacitorHttp || window.Capacitor?.Plugins?.Http;
+            if (plugin) {
+                const resp = await plugin.request({
+                    method: 'GET', url,
+                    headers: { 'Accept': 'application/json' }
+                });
+                clearTimeout(timer);
+                return typeof resp.data === 'object' ? resp.data : JSON.parse(resp.data);
+            }
+            const resp = await fetch(url, { signal: controller.signal });
+            clearTimeout(timer);
+            return await resp.json();
+        } catch (e) {
+            clearTimeout(timer);
+            return null;
+        }
     }
 
     // ─── Cache System ───────────────────────────────────────────────
@@ -79,15 +206,19 @@ class AIMatcher {
     _setCachedMatch(query, candidates, type, matchedIndex, matchedTitle, confidence, method) {
         const cache = this._loadCache();
         const key = this._getCacheKey(query, candidates, type);
-        cache.matches[key] = {
+        const entry = {
             matchedIndex,
             matchedTitle,
             confidence,
-            method, // 'ai', 'ddg', 'ai+ddg'
+            method,
             timestamp: Date.now()
         };
+        cache.matches[key] = entry;
         this._saveCache();
         console.log(`[AIMatcher] Cached: "${query}" → "${matchedTitle}" (${method}, ${confidence}%)`);
+
+        // Async contribute to community DB (fire-and-forget)
+        this._contributeToCommunity(key, entry).catch(() => {});
     }
 
     // ─── DuckDuckGo Search ──────────────────────────────────────────

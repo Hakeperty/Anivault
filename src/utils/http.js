@@ -125,7 +125,8 @@ class HttpClient {
                url.includes('api.mangadex.org') ||
                url.includes('uploads.mangadex.org') ||
                url.includes('integrate.api.nvidia.com') ||
-               url.includes('api.duckduckgo.com');
+               url.includes('api.duckduckgo.com') ||
+               url.includes('jsonblob.com');
     }
 }
 
