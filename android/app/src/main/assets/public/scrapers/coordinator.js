@@ -3,12 +3,13 @@
  * Searches all scrapers in parallel, deduplicates, and merges results.
  * Priority order (first source wins on dedupe):
  * Anime: AniWatch
- * Manga: MangaKatana (direct HTML scraping) + MangaDex API
+ * Manga: MangaDex API + MangaKatana + MangaPill (fallback)
  */
 
 import { AniWatchScraper } from './aniwatch.js';
 import { MangaDexScraper } from './mangadex.js';
 import { MangaKatanaScraper } from './mangakatana.js';
+import { MangaPillScraper } from './mangapill.js';
 import { JikanScraper } from './jikan.js';
 
 export class SearchCoordinator {
@@ -39,6 +40,11 @@ export class SearchCoordinator {
                 MangaDexScraper.search(query)
                     .then(r => ({ type: 'manga', source: 'mangadex', results: r }))
                     .catch(e => { console.error('MangaDex failed:', e); return { type: 'manga', source: 'mangadex', results: [] }; })
+            );
+            promises.push(
+                MangaPillScraper.search(query)
+                    .then(r => ({ type: 'manga', source: 'mangapill', results: r }))
+                    .catch(e => { console.error('MangaPill failed:', e); return { type: 'manga', source: 'mangapill', results: [] }; })
             );
         }
 
@@ -268,6 +274,8 @@ export class SearchCoordinator {
         try {
             if (normalizedSource === 'mangakatana') {
                 chapters = await MangaKatanaScraper.getChapters(katanaTarget);
+            } else if (normalizedSource === 'mangapill') {
+                chapters = await MangaPillScraper.getChapters(mangaUrl || mangaId);
             } else {
                 chapters = await MangaDexScraper.getChapters(mangaId);
             }
@@ -328,6 +336,36 @@ export class SearchCoordinator {
             }
         }
 
+        // MangaPill as ultimate fallback if still no chapters
+        if (!chapters || chapters.length === 0) {
+            try {
+                console.log('[Coordinator] Trying MangaPill fallback for', mangaTitle || mangaId);
+                const searchTerms = [mangaTitle, altTitle].filter(Boolean);
+                // Also try Jikan English title if we don't have altTitle
+                if (!altTitle && mangaTitle) {
+                    try {
+                        const enTitle = await this._lookupEnglishTitle(mangaTitle);
+                        if (enTitle && enTitle !== mangaTitle) searchTerms.push(enTitle);
+                    } catch (_) {}
+                }
+
+                for (const term of searchTerms) {
+                    const pillResults = await MangaPillScraper.search(term);
+                    const match = this._bestMangaMatch(pillResults, mangaTitle) ||
+                        (altTitle ? this._bestMangaMatch(pillResults, altTitle) : null);
+                    if (match) {
+                        chapters = await MangaPillScraper.getChapters(match.url || match.id);
+                        if (chapters.length > 0) {
+                            console.log(`[Coordinator] MangaPill found ${chapters.length} chapters`);
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[Coordinator] MangaPill fallback failed:', e.message);
+            }
+        }
+
         return chapters || [];
     }
 
@@ -342,6 +380,8 @@ export class SearchCoordinator {
         try {
             if (normalizedSource === 'mangakatana') {
                 pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
+            } else if (normalizedSource === 'mangapill') {
+                pages = normalizePages(await MangaPillScraper.getPages(chapterId));
             } else {
                 pages = normalizePages(await MangaDexScraper.getPages(chapterId));
             }
@@ -373,6 +413,29 @@ export class SearchCoordinator {
                 pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
             }
         } catch (_) {}
+
+        // MangaPill as ultimate page fallback
+        if ((!pages || pages.length === 0) && mangaTitle && chapterNumber !== null) {
+            try {
+                console.log(`[Coordinator] MangaPill page fallback: "${mangaTitle}" ch.${chapterNumber}`);
+                const searchTerms = [mangaTitle, altTitle].filter(Boolean);
+                for (const term of searchTerms) {
+                    const pillResults = await MangaPillScraper.search(term);
+                    const match = this._bestMangaMatch(pillResults, mangaTitle) ||
+                        (altTitle ? this._bestMangaMatch(pillResults, altTitle) : null);
+                    if (match) {
+                        const chapters = await MangaPillScraper.getChapters(match.url || match.id);
+                        const targetCh = chapters.find(ch => ch.chapter === chapterNumber);
+                        if (targetCh) {
+                            pages = normalizePages(await MangaPillScraper.getPages(targetCh.url || targetCh.id));
+                            if (pages.length > 0) break;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[Coordinator] MangaPill page fallback failed:', e.message);
+            }
+        }
 
         return pages || [];
     }

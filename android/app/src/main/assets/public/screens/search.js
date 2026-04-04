@@ -238,7 +238,8 @@ export class SearchScreen {
             hianime: 'HiAnime',
             aniwatch: 'AniWatch',
             mangadex: 'MangaDex',
-            mangakatana: 'MangaKatana'
+            mangakatana: 'MangaKatana',
+            mangapill: 'MangaPill'
         };
         return names[source] || source;
     }

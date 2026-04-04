@@ -148,8 +148,14 @@ export class SettingsScreen {
                     </div>
                     <div class="settings-item static">
                         <div class="settings-item-info">
-                            <span class="settings-item-title">Manga (Fallback)</span>
-                            <span class="settings-item-desc">MangaKatana — cross-source fallback when primary fails</span>
+                            <span class="settings-item-title">Manga (Fallback 1)</span>
+                            <span class="settings-item-desc">MangaKatana — cross-source fallback when MangaDex fails</span>
+                        </div>
+                    </div>
+                    <div class="settings-item static">
+                        <div class="settings-item-info">
+                            <span class="settings-item-title">Manga (Fallback 2)</span>
+                            <span class="settings-item-desc">MangaPill — ultimate backup with direct CDN images</span>
                         </div>
                     </div>
                 </div>
