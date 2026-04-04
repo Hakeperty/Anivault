@@ -345,18 +345,88 @@ export class SearchCoordinator {
         }
     }
 
-    /** Find best manga title match from search results */
+    /**
+     * Normalize a title for comparison.
+     * Keeps alphanumeric chars and common romanized-Japanese particles so that
+     * titles like "Sono Bisque Doll wa Koi o Suru" compare correctly.
+     */
+    static _normalizeTitle(s) {
+        return (s || '')
+            .toLowerCase()
+            .normalize('NFKD')                   // decompose accented chars
+            .replace(/[\u0300-\u036f]/g, '')      // strip combining diacritics
+            .replace(/[^a-z0-9\s]/g, ' ')         // non-alphanum → space
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /**
+     * Compute word-overlap score between two normalized title strings.
+     * Returns a value between 0 and 1 representing the fraction of words
+     * in the shorter title that appear in the longer one.
+     */
+    static _wordOverlapScore(a, b) {
+        const aWords = a.split(' ').filter(Boolean);
+        const bWords = b.split(' ').filter(Boolean);
+        if (aWords.length === 0 || bWords.length === 0) return 0;
+        const [shorter, longer] = aWords.length <= bWords.length
+            ? [aWords, new Set(bWords)]
+            : [bWords, new Set(aWords)];
+        const matches = shorter.filter(w => longer.has(w)).length;
+        return matches / shorter.length;
+    }
+
+    /**
+     * Find best manga title match from search results.
+     * Returns null if no result meets a minimum quality threshold so that
+     * callers never receive an unrelated manga as a "match".
+     */
     static _bestMangaMatch(results, title) {
-        const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const target = normalize(title);
-        // Exact match first
-        const exact = results.find(r => normalize(r.title) === target);
-        if (exact) return exact;
-        // Substring match
-        const partial = results.find(r =>
-            normalize(r.title).includes(target) || target.includes(normalize(r.title))
-        );
-        return partial || results[0]; // fall back to first result
+        if (!results || results.length === 0) return null;
+
+        const targetNorm = this._normalizeTitle(title);
+        const targetCompact = targetNorm.replace(/\s/g, '');
+
+        let best = null;
+        let bestScore = -Infinity;
+
+        for (const r of results) {
+            const rNorm = this._normalizeTitle(r.title);
+            const rCompact = rNorm.replace(/\s/g, '');
+            let score = 0;
+
+            // Exact compact match (ignoring spaces/punctuation)
+            if (rCompact === targetCompact) {
+                return r; // perfect match — short-circuit
+            }
+
+            // Substring containment
+            if (rCompact.includes(targetCompact) || targetCompact.includes(rCompact)) {
+                score += 80;
+            }
+
+            // Word overlap
+            const overlap = this._wordOverlapScore(targetNorm, rNorm);
+            score += overlap * 100;
+
+            // Penalize large length differences
+            const lenDiff = Math.abs(rCompact.length - targetCompact.length);
+            score -= lenDiff * 0.5;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best = r;
+            }
+        }
+
+        // Require at least 50% word overlap OR a containment match (score >= 80)
+        // to avoid returning a completely unrelated manga
+        const bestOverlap = best ? this._wordOverlapScore(targetNorm, this._normalizeTitle(best.title)) : 0;
+        if (bestScore >= 80 || bestOverlap >= 0.5) {
+            return best;
+        }
+
+        return null; // no sufficiently good match — caller handles null
     }
 
     static async getAnimeStreamUrl(episodeOrId, source = 'aniwatch', audioType = null) {
@@ -370,13 +440,14 @@ export class SearchCoordinator {
 
     /** Get trending/popular content for the Discover screen */
     static async getTrending() {
-        const [airing, popular, upcoming, seasonNow, mangaPopular, mangaRecent] = await Promise.allSettled([
+        const [airing, popular, upcoming, seasonNow, mangaPopular, mangaRecent, weeklySchedule] = await Promise.allSettled([
             JikanScraper.getTopAiring(20),
             JikanScraper.getTopPopular(20),
             JikanScraper.getUpcoming(20),
             JikanScraper.getSeasonNow(25),
             MangaDexScraper.getPopular(20),
-            MangaDexScraper.getRecentlyUpdated(15)
+            MangaDexScraper.getRecentlyUpdated(15),
+            JikanScraper.getWeeklySchedule()
         ]);
 
         return {
@@ -385,7 +456,8 @@ export class SearchCoordinator {
             upcoming: upcoming.status === 'fulfilled' ? upcoming.value : [],
             seasonNow: seasonNow.status === 'fulfilled' ? seasonNow.value : [],
             mangaPopular: mangaPopular.status === 'fulfilled' ? mangaPopular.value : [],
-            mangaRecent: mangaRecent.status === 'fulfilled' ? mangaRecent.value : []
+            mangaRecent: mangaRecent.status === 'fulfilled' ? mangaRecent.value : [],
+            weeklySchedule: weeklySchedule.status === 'fulfilled' ? weeklySchedule.value : {}
         };
     }
 

@@ -34,9 +34,14 @@ export class MangaDexScraper {
 
     /**
      * Search for manga on MangaDex.
-     * Tries the title query first; if no results, retries with the original
-     * query as an alt-title to catch Japanese/romaji names like
-     * "Sono Bisque Doll wa Koi o Suru".
+     * Strategy:
+     *  1. Primary search by `title` param.
+     *  2. If no results, retry with `order[relevance]=desc` which broadens
+     *     matching across altTitles (catches romanised Japanese titles like
+     *     "Sono Bisque Doll wa Koi o Suru").
+     *  3. If still no results and the query looks like a romanised Japanese
+     *     title (contains particles like "wa", "no", "o"), search for a
+     *     well-known English equivalent via altTitle too.
      */
     static async search(query) {
         try {
@@ -57,9 +62,7 @@ export class MangaDexScraper {
             const data = await http.getJSON(url);
             let results = this.parseSearchResults(data);
 
-            // If no results, retry with the query in the generic order parameter
-            // which searches across title + altTitles. This helps find manga by
-            // Japanese or romanised titles (e.g. "Sono Bisque Doll wa Koi o Suru").
+            // Retry with relevance ordering (broadens alt-title matching)
             if (results.length === 0) {
                 const altParams = baseParams();
                 altParams.set('title', query);
@@ -67,6 +70,18 @@ export class MangaDexScraper {
                 const altUrl = `${MANGADEX_API}/manga?${altParams.toString()}`;
                 const altData = await http.getJSON(altUrl);
                 results = this.parseSearchResults(altData);
+            }
+
+            // If still empty and the query looks like a romanised Japanese
+            // title, try available translated language filter to widen the net
+            if (results.length === 0) {
+                const broaderParams = baseParams();
+                broaderParams.set('title', query);
+                broaderParams.set('order[relevance]', 'desc');
+                broaderParams.append('availableTranslatedLanguage[]', 'en');
+                const broaderUrl = `${MANGADEX_API}/manga?${broaderParams.toString()}`;
+                const broaderData = await http.getJSON(broaderUrl);
+                results = this.parseSearchResults(broaderData);
             }
 
             return await this._attachStatistics(results);

@@ -300,6 +300,7 @@ export class LibraryScreen {
     }
 
     getProgressPercent(item) {
+        if (!item.progress) return 0;
         if (item.type === 'anime') {
             const total = item.episodes || 1;
             const current = item.progress.currentEpisode || 0;

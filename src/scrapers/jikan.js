@@ -97,6 +97,40 @@ export class JikanScraper {
     }
 
     /**
+     * Get anime schedule for a specific day of the week.
+     * Returns anime airing on that day (JST).
+     */
+    static async getScheduleByDay(day = 'monday', limit = 25) {
+        try {
+            const url = `${JIKAN_API}/schedules?day=${encodeURIComponent(day)}&limit=${limit}&sfw=true`;
+            const data = await http.getJSON(url);
+            return this.parseSearchResults(data).map(item => ({
+                ...item,
+                airingDay: day
+            }));
+        } catch (error) {
+            console.error(`Jikan schedule (${day}) error:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * Get the full weekly airing schedule grouped by day.
+     * Returns { monday: [...], tuesday: [...], ... }
+     */
+    static async getWeeklySchedule() {
+        const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        const results = await Promise.allSettled(
+            days.map(day => this.getScheduleByDay(day, 8))
+        );
+        const schedule = {};
+        days.forEach((day, i) => {
+            schedule[day] = results[i].status === 'fulfilled' ? results[i].value : [];
+        });
+        return schedule;
+    }
+
+    /**
      * Get anime recommendations for a specific anime
      */
     static async getRecommendations(malId) {

@@ -1406,8 +1406,59 @@ p {
 .section-icon.book { background: rgba(191, 90, 242, 0.15); color: #BF5AF2; }
 .section-icon.sparkle { background: rgba(100, 210, 255, 0.15); color: #64D2FF; }
 .section-icon.calendar { background: rgba(255, 159, 10, 0.15); color: #FF9F0A; }
+.section-icon.schedule { background: rgba(100, 210, 255, 0.15); color: #64D2FF; }
 .section-icon.recommend { background: rgba(50, 215, 75, 0.15); color: #32D74B; }
 .section-icon.user-recommend { background: rgba(255, 214, 10, 0.15); color: #FFD60A; }
+
+/* Weekly Schedule Tabs */
+.schedule-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 0 16px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+.schedule-tabs::-webkit-scrollbar { display: none; }
+.schedule-tab {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 20px;
+    background: var(--surface-secondary, #1c1c1e);
+    color: var(--text-secondary, #8e8e93);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.schedule-tab.active {
+    background: linear-gradient(135deg, #64D2FF, #5AC8FA);
+    color: #000;
+}
+.schedule-today-dot {
+    font-size: 8px;
+    line-height: 1;
+}
+.schedule-count {
+    font-size: 11px;
+    opacity: 0.7;
+}
+.schedule-panel {
+    display: none;
+}
+.schedule-panel.active {
+    display: block;
+}
+.schedule-empty {
+    padding: 20px 16px;
+    text-align: center;
+    color: var(--text-tertiary, #48484a);
+    font-size: 13px;
+}
 
 .discover-row {
     display: flex;

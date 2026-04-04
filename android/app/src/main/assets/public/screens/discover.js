@@ -220,6 +220,11 @@ export class DiscoverScreen {
     _buildSections(data) {
         let html = '';
 
+        // Weekly Schedule — special tabbed section
+        if (data.weeklySchedule && Object.values(data.weeklySchedule).some(d => d?.length)) {
+            html += this._buildWeeklySchedule(data.weeklySchedule);
+        }
+
         if (data.seasonNow?.length) {
             html += this._section(
                 `<span class="section-icon seasonal">${ICONS.seasonal}</span>This Season`,
@@ -264,6 +269,63 @@ export class DiscoverScreen {
         return html;
     }
 
+    _buildWeeklySchedule(schedule) {
+        const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        const SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+        // Find today's day (JST approximation: UTC + 9)
+        const now = new Date();
+        const jstDay = new Date(now.getTime() + 9 * 60 * 60 * 1000).getUTCDay();
+        // getUTCDay: 0=Sun, so map: Sun=6, Mon=0, Tue=1, ...
+        const todayIdx = jstDay === 0 ? 6 : jstDay - 1;
+
+        const tabs = DAYS.map((day, i) => {
+            const isToday = i === todayIdx;
+            const count = schedule[day]?.length || 0;
+            return `<button class="schedule-tab${isToday ? ' active' : ''}" data-day="${day}">
+                ${SHORT[i]}${isToday ? ' <span class="schedule-today-dot">●</span>' : ''}
+                ${count > 0 ? `<span class="schedule-count">${count}</span>` : ''}
+            </button>`;
+        }).join('');
+
+        // Build card rows for each day (only active day visible)
+        const dayPanels = DAYS.map((day, i) => {
+            const items = schedule[day] || [];
+            const isToday = i === todayIdx;
+            if (items.length === 0) {
+                return `<div class="schedule-panel${isToday ? ' active' : ''}" data-day-panel="${day}">
+                    <p class="schedule-empty">No anime airing on ${SHORT[i]}</p>
+                </div>`;
+            }
+            const cards = items.map((item, ci) => {
+                return `
+                <div class="discover-card" data-id="${item.id}" data-source="${item.source}" data-type="anime" style="animation-delay: ${Math.min(ci * 0.03, 0.3)}s">
+                    <div class="discover-card-cover">
+                        <img src="${item.coverImage || ''}" alt="${this._esc(item.title)}" loading="lazy"
+                             onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 140%22><rect fill=%22%231a1a1a%22 width=%22100%22 height=%22140%22/><text x=%2250%22 y=%2270%22 fill=%22%23444%22 text-anchor=%22middle%22 font-size=%2210%22>No Image</text></svg>'">
+                        ${item.score ? `<span class="discover-score">★ ${item.score}</span>` : ''}
+                        <span class="discover-type-pill anime">Anime</span>
+                    </div>
+                    <p class="discover-card-title">${this._esc(item.title)}</p>
+                    ${item.genres?.length ? `<p class="discover-card-genre">${item.genres.slice(0, 2).join(' · ')}</p>` : ''}
+                </div>`;
+            }).join('');
+            return `<div class="schedule-panel${isToday ? ' active' : ''}" data-day-panel="${day}">
+                <div class="discover-row">${cards}</div>
+            </div>`;
+        }).join('');
+
+        return `
+            <div class="discover-section" data-section="weekly-schedule">
+                <h2 class="discover-section-title">
+                    <span class="section-icon schedule">${ICONS.calendar}</span>Airing This Week
+                </h2>
+                <div class="schedule-tabs">${tabs}</div>
+                <div class="schedule-panels">${dayPanels}</div>
+            </div>
+        `;
+    }
+
     _section(title, items, sectionId) {
         const cards = items.map((item, i) => {
             const yearBadge = item.year ? `<span class="discover-year">${item.year}</span>` : '';
@@ -299,7 +361,19 @@ export class DiscoverScreen {
 
                 // Find the item in cache or recommendations
                 let item = null;
-                const allLists = this._cache ? Object.values(this._cache) : [];
+                const allLists = [];
+                if (this._cache) {
+                    for (const [key, val] of Object.entries(this._cache)) {
+                        if (key === 'weeklySchedule' && val && typeof val === 'object') {
+                            // weeklySchedule is { monday: [...], ... }
+                            for (const dayItems of Object.values(val)) {
+                                if (Array.isArray(dayItems)) allLists.push(dayItems);
+                            }
+                        } else if (Array.isArray(val)) {
+                            allLists.push(val);
+                        }
+                    }
+                }
                 if (this._recommendations) allLists.push(this._recommendations);
                 if (this._userRecommends) allLists.push(this._userRecommends);
 
@@ -328,6 +402,20 @@ export class DiscoverScreen {
                         source: item.source
                     }
                 }));
+            });
+        });
+
+        // Schedule tab switching
+        container.querySelectorAll('.schedule-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const day = tab.dataset.day;
+                // Update active tab
+                container.querySelectorAll('.schedule-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                // Show corresponding panel
+                container.querySelectorAll('.schedule-panel').forEach(p => p.classList.remove('active'));
+                const panel = container.querySelector(`.schedule-panel[data-day-panel="${day}"]`);
+                if (panel) panel.classList.add('active');
             });
         });
     }
