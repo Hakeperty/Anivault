@@ -149,7 +149,8 @@ export class DetailScreen {
                 this.renderEpisodes(container);
             } else {
                 this.chapters = await SearchCoordinator.getMangaChapters(
-                    this.item.id, this.item.source, this.item.url, this.item.title
+                    this.item.id, this.item.source, this.item.url, this.item.title,
+                    this.item.titleEnglish || ''
                 );
                 this.chapters = this.chapters.map((ch) => ({
                     ...ch,

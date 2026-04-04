@@ -170,9 +170,20 @@ export class MangaDexScraper {
 
                 const attributes = manga.attributes || {};
 
+                // Extract English title from altTitles for fallback searches
+                let titleEnglish = '';
+                if (attributes.title?.en) {
+                    titleEnglish = attributes.title.en;
+                } else {
+                    for (const alt of (attributes.altTitles || [])) {
+                        if (alt.en) { titleEnglish = alt.en; break; }
+                    }
+                }
+
                 results.push({
                     id: manga.id,
                     title: this._getTitle(attributes),
+                    titleEnglish,
                     coverImage: coverUrl,
                     description: attributes.description?.en || '',
                     genres: (attributes.tags || [])

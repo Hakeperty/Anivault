@@ -13,7 +13,6 @@ const SETTING_DEFAULTS = {
     autoplayNext: 'on',
     contentType: 'both',
     readerMode: 'page',
-    mangaSource: 'mangadex',
     nsfwFilter: 'off',
     discoverCache: '10'
 };
@@ -77,10 +76,6 @@ export class SettingsScreen {
                     ${this.renderSelect('readerMode', 'Manga Reader Mode', 'How manga pages are displayed', [
                         { value: 'page', label: 'Page-by-Page' },
                         { value: 'scroll', label: 'Vertical Scroll' }
-                    ])}
-                    ${this.renderSelect('mangaSource', 'Preferred Manga Source', 'Which source to try first for manga', [
-                        { value: 'mangadex', label: 'MangaDex (API)' },
-                        { value: 'mangakatana', label: 'MangaKatana (Scraper)' }
                     ])}
                     ${this.renderToggle('nsfwFilter', 'NSFW Filter', 'Block adult content from search results')}
                 </div>

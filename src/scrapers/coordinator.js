@@ -243,7 +243,7 @@ export class SearchCoordinator {
         return best;
     }
 
-    static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '', mangaTitle = '') {
+    static async getMangaChapters(mangaId, source = 'mangakatana', mangaUrl = '', mangaTitle = '', altTitle = '') {
         const normalizedSource = String(source || '').toLowerCase();
         const katanaTarget = mangaUrl || mangaId;
 
@@ -275,8 +275,16 @@ export class SearchCoordinator {
                 } else {
                     // MangaDex failed → search MangaKatana by title
                     if (mangaTitle) {
-                        const katanaResults = await MangaKatanaScraper.search(mangaTitle);
-                        const match = this._bestMangaMatch(katanaResults, mangaTitle);
+                        let katanaResults = await MangaKatanaScraper.search(mangaTitle);
+                        let match = this._bestMangaMatch(katanaResults, mangaTitle);
+
+                        // If Japanese/romaji title didn't match, try English alt title
+                        if (!match && altTitle && altTitle !== mangaTitle) {
+                            console.log('[Coordinator] Retrying MangaKatana with alt title:', altTitle);
+                            katanaResults = await MangaKatanaScraper.search(altTitle);
+                            match = this._bestMangaMatch(katanaResults, altTitle);
+                        }
+
                         if (match) chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
                     } else if (katanaTarget.startsWith('http') || katanaTarget.startsWith('/')) {
                         chapters = await MangaKatanaScraper.getChapters(katanaTarget);
@@ -290,7 +298,7 @@ export class SearchCoordinator {
         return chapters || [];
     }
 
-    static async getChapterPages(chapterId, source = 'mangakatana', mangaTitle = '', chapterNumber = null) {
+    static async getChapterPages(chapterId, source = 'mangakatana', mangaTitle = '', chapterNumber = null, altTitle = '') {
         const normalizedSource = String(source || '').toLowerCase();
         const normalizePages = (pages) => (pages || [])
             .map((page) => (typeof page === 'string' ? page : page?.url))
@@ -316,7 +324,7 @@ export class SearchCoordinator {
             console.log(`[Coordinator] Cross-source page fallback: "${mangaTitle}" ch.${chapterNumber}`);
             try {
                 const fallbackPages = await this._crossSourcePageFallback(
-                    normalizedSource, mangaTitle, chapterNumber
+                    normalizedSource, mangaTitle, chapterNumber, altTitle
                 );
                 if (fallbackPages.length > 0) return fallbackPages;
             } catch (e) {
@@ -340,18 +348,21 @@ export class SearchCoordinator {
      * Cross-source page fallback: search the alternate source for the same manga,
      * find a matching chapter by number, and load pages from it.
      */
-    static async _crossSourcePageFallback(failedSource, mangaTitle, chapterNumber) {
+    static async _crossSourcePageFallback(failedSource, mangaTitle, chapterNumber, altTitle = '') {
         const normalizePages = (pages) => (pages || [])
             .map((page) => (typeof page === 'string' ? page : page?.url))
             .filter(Boolean);
 
         if (failedSource === 'mangadex') {
             // MangaDex failed → try MangaKatana
-            const searchResults = await MangaKatanaScraper.search(mangaTitle);
-            if (!searchResults.length) return [];
+            let searchResults = await MangaKatanaScraper.search(mangaTitle);
+            let match = this._bestMangaMatch(searchResults, mangaTitle);
 
-            // Find best title match
-            const match = this._bestMangaMatch(searchResults, mangaTitle);
+            // Retry with English alt title if Japanese title didn't match
+            if (!match && altTitle && altTitle !== mangaTitle) {
+                searchResults = await MangaKatanaScraper.search(altTitle);
+                match = this._bestMangaMatch(searchResults, altTitle);
+            }
             if (!match) return [];
 
             const chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
