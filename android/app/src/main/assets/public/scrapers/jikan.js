@@ -126,7 +126,7 @@ export class JikanScraper {
         for (let i = 0; i < days.length; i += 2) {
             const batch = days.slice(i, i + 2);
             const results = await Promise.allSettled(
-                batch.map(day => this.getScheduleByDay(day, 8))
+                batch.map(day => this.getScheduleByDay(day, 25))
             );
             batch.forEach((day, j) => {
                 schedule[day] = results[j].status === 'fulfilled' ? results[j].value : [];
@@ -251,7 +251,8 @@ export class JikanScraper {
                     status: anime.status || 'Unknown',
                     year: anime.year || (anime.aired?.prop?.from?.year) || null,
                     season: anime.season || null,
-                    airedFrom: anime.aired?.from || null
+                    airedFrom: anime.aired?.from || null,
+                    broadcast: anime.broadcast?.string || anime.broadcast?.time || null
                 });
             } catch (e) {
                 console.debug('Jikan parse error:', e);

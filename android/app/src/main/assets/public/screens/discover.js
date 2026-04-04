@@ -46,6 +46,11 @@ export class DiscoverScreen {
                         <span>Loading trending...</span>
                     </div>
                 </div>
+                <button id="scroll-to-top" class="scroll-to-top" aria-label="Scroll to top">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="22" height="22">
+                        <polyline points="18 15 12 9 6 15"/>
+                    </svg>
+                </button>
             </div>
         `;
     }
@@ -57,6 +62,19 @@ export class DiscoverScreen {
             this._userRecommends = null;
             this._loadContent();
         });
+
+        // Scroll-to-top button
+        const scrollBtn = document.getElementById('scroll-to-top');
+        const discoverScreen = document.querySelector('.discover-screen');
+        if (scrollBtn && discoverScreen) {
+            discoverScreen.addEventListener('scroll', () => {
+                scrollBtn.classList.toggle('visible', discoverScreen.scrollTop > 400);
+            });
+            scrollBtn.addEventListener('click', () => {
+                discoverScreen.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        }
+
         this._loadContent();
     }
 
@@ -313,7 +331,8 @@ export class DiscoverScreen {
                         <span class="discover-type-pill anime">Anime</span>
                     </div>
                     <p class="discover-card-title">${this._esc(item.title)}</p>
-                    ${item.genres?.length ? `<p class="discover-card-genre">${item.genres.slice(0, 2).join(' · ')}</p>` : ''}
+                    ${item.broadcast ? `<p class="discover-card-genre">${this._esc(item.broadcast)}</p>` : ''}
+                    ${!item.broadcast && item.genres?.length ? `<p class="discover-card-genre">${item.genres.slice(0, 2).join(' · ')}</p>` : ''}
                 </div>`;
             }).join('');
             return `<div class="schedule-panel${isToday ? ' active' : ''}" data-day-panel="${day}">
