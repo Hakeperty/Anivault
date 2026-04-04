@@ -56,13 +56,29 @@ export class SearchCoordinator {
         const dedupedAnime = this._deduplicate(anime);
         const dedupedManga = this._deduplicate(manga);
 
+        // Sort results by relevance to query (checks both title and titleEnglish)
+        const sortByRelevance = (items) => {
+            const qNorm = this._normalizeTitle(query);
+            return items.sort((a, b) => {
+                const scoreA = Math.max(
+                    this._wordOverlapScore(qNorm, this._normalizeTitle(a.title)),
+                    a.titleEnglish ? this._wordOverlapScore(qNorm, this._normalizeTitle(a.titleEnglish)) : 0
+                );
+                const scoreB = Math.max(
+                    this._wordOverlapScore(qNorm, this._normalizeTitle(b.title)),
+                    b.titleEnglish ? this._wordOverlapScore(qNorm, this._normalizeTitle(b.titleEnglish)) : 0
+                );
+                return scoreB - scoreA;
+            });
+        };
+
         return {
-            anime: dedupedAnime,
-            manga: dedupedManga,
-            all: [
+            anime: sortByRelevance(dedupedAnime),
+            manga: sortByRelevance(dedupedManga),
+            all: sortByRelevance([
                 ...dedupedAnime.map(r => ({ ...r, type: 'anime' })),
                 ...dedupedManga.map(r => ({ ...r, type: 'manga' }))
-            ]
+            ])
         };
     }
 
@@ -483,24 +499,32 @@ export class SearchCoordinator {
         for (const r of results) {
             const rNorm = this._normalizeTitle(r.title);
             const rCompact = rNorm.replace(/\s/g, '');
+            // Also check English alt title for matching
+            const rEnNorm = r.titleEnglish ? this._normalizeTitle(r.titleEnglish) : '';
+            const rEnCompact = rEnNorm.replace(/\s/g, '');
             let score = 0;
 
             // Exact compact match (ignoring spaces/punctuation)
-            if (rCompact === targetCompact) {
+            if (rCompact === targetCompact || (rEnCompact && rEnCompact === targetCompact)) {
                 return r; // perfect match — short-circuit
             }
 
-            // Substring containment
-            if (rCompact.includes(targetCompact) || targetCompact.includes(rCompact)) {
+            // Substring containment (check both primary and English title)
+            if (rCompact.includes(targetCompact) || targetCompact.includes(rCompact) ||
+                (rEnCompact && (rEnCompact.includes(targetCompact) || targetCompact.includes(rEnCompact)))) {
                 score += 80;
             }
 
-            // Word overlap
+            // Word overlap — use best of primary title and English title
             const overlap = this._wordOverlapScore(targetNorm, rNorm);
-            score += overlap * 100;
+            const enOverlap = rEnNorm ? this._wordOverlapScore(targetNorm, rEnNorm) : 0;
+            score += Math.max(overlap, enOverlap) * 100;
 
-            // Penalize large length differences
-            const lenDiff = Math.abs(rCompact.length - targetCompact.length);
+            // Penalize large length differences (use closer title)
+            const lenDiff = Math.min(
+                Math.abs(rCompact.length - targetCompact.length),
+                rEnCompact ? Math.abs(rEnCompact.length - targetCompact.length) : Infinity
+            );
             score -= lenDiff * 0.5;
 
             if (score > bestScore) {
@@ -510,10 +534,14 @@ export class SearchCoordinator {
         }
 
         // Require at least 50% word overlap OR a containment match (score >= 80)
-        // to avoid returning a completely unrelated manga
-        const bestOverlap = best ? this._wordOverlapScore(targetNorm, this._normalizeTitle(best.title)) : 0;
-        if (bestScore >= 80 || bestOverlap >= 0.5) {
-            return best;
+        if (best) {
+            const bestOverlap = Math.max(
+                this._wordOverlapScore(targetNorm, this._normalizeTitle(best.title)),
+                best.titleEnglish ? this._wordOverlapScore(targetNorm, this._normalizeTitle(best.titleEnglish)) : 0
+            );
+            if (bestScore >= 80 || bestOverlap >= 0.5) {
+                return best;
+            }
         }
 
         return null; // no sufficiently good match — caller handles null
