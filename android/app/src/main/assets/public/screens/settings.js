@@ -4,6 +4,7 @@
 
 import { db } from '../db/indexeddb.js';
 import { showToast } from '../utils/toast.js';
+import { aiMatcher } from '../utils/ai-matcher.js';
 
 const APP_VERSION = '2.0.0';
 
@@ -103,6 +104,19 @@ export class SettingsScreen {
                             style="width:100%;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;font-size:13px;font-family:monospace;" />
                     </div>
                     ${this.renderToggle('aiMatching', 'AI-Powered Matching', 'Use NVIDIA AI + DuckDuckGo to improve anime/manga title matching')}
+                    <div class="settings-item static" style="justify-content:space-between;">
+                        <div class="settings-item-info" style="flex:1;min-width:0;">
+                            <span class="settings-item-title">Cached Matches</span>
+                            <span class="settings-item-desc" id="match-cache-count">${this._getMatchCacheCount()} local matches saved</span>
+                        </div>
+                    </div>
+                    <button class="settings-item" id="settings-sync-matches">
+                        <div class="settings-item-info">
+                            <span class="settings-item-title">Sync Community Matches</span>
+                            <span class="settings-item-desc">Download shared match database from other users — helps match anime/manga titles faster</span>
+                        </div>
+                        <svg class="settings-item-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
                 </div>
 
                 <div class="settings-group">
@@ -186,7 +200,7 @@ export class SettingsScreen {
                     <div class="settings-item static">
                         <div class="settings-item-info">
                             <span class="settings-item-title">Features</span>
-                            <span class="settings-item-desc">Weekly airing schedule · HLS streaming · Manga reader (3 modes) · Cross-source fallback · Library & progress tracking · User recommendations</span>
+                            <span class="settings-item-desc">Weekly airing schedule · HLS streaming · Manga reader (3 modes) · Cross-source fallback · Library & progress tracking · User recommendations · AI-powered title matching</span>
                         </div>
                     </div>
                     <div class="settings-item static">
@@ -287,6 +301,30 @@ export class SettingsScreen {
                 }, 800);
             });
         }
+
+        // Sync community matches button
+        document.getElementById('settings-sync-matches')?.addEventListener('click', async () => {
+            showToast('Syncing community matches...', 'info');
+            try {
+                await aiMatcher.syncCommunityMatches();
+                const countEl = document.getElementById('match-cache-count');
+                if (countEl) countEl.textContent = `${this._getMatchCacheCount()} local matches saved`;
+                showToast('Community matches synced!', 'success');
+            } catch (e) {
+                showToast('Sync failed: ' + e.message, 'error');
+            }
+        });
+    }
+
+    _getMatchCacheCount() {
+        try {
+            const raw = localStorage.getItem('anivault_match_cache');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                return Object.keys(parsed.matches || {}).length;
+            }
+        } catch (_) {}
+        return 0;
     }
 
     async saveSetting(key, value) {
