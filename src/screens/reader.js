@@ -61,7 +61,7 @@ export class ReaderScreen {
                 </div>
 
                 <!-- Scroll mode container -->
-                <div id="reader-scroll-container" style="flex:1;display:none;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+                <div id="reader-scroll-container" style="flex:1;display:none;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:70px;">
                     <div id="reader-scroll-pages" style="display:flex;flex-direction:column;align-items:center;gap:2px;"></div>
                 </div>
 
@@ -522,7 +522,10 @@ export class ReaderScreen {
     // --- Preloading ---
 
     preloadAdjacent() {
-        const range = [this.currentPage - 1, this.currentPage + 1, this.currentPage + 2];
+        const range = [
+            this.currentPage - 1, this.currentPage + 1,
+            this.currentPage + 2, this.currentPage + 3, this.currentPage + 4
+        ];
         for (const idx of range) {
             if (idx >= 0 && idx < this.pages.length && !this.preloadedImages.has(idx)) {
                 const img = new Image();
