@@ -156,10 +156,18 @@ export class SearchCoordinator {
     /**
      * Smart match: score each AniWatch result against the Jikan item
      * to avoid picking a same-name TV series when the user wants the Movie.
+     * Returns null if no result is a sufficiently good match.
      */
     static _findBestMatch(results, title, expectedEps = null) {
+        if (!results || results.length === 0) return null;
+
         const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const targetNorm = normalize(title);
+        const targetWords = (title || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+
+        // Extract season number from title (e.g. "... 2", "... Season 3")
+        const seasonMatch = title.match(/(?:\s+(\d)$|\s+season\s*(\d+)|\s+(\d+)(?:st|nd|rd|th)\s+season)/i);
+        const targetSeason = seasonMatch ? parseInt(seasonMatch[1] || seasonMatch[2] || seasonMatch[3]) : null;
 
         let best = null;
         let bestScore = -1;
@@ -167,6 +175,7 @@ export class SearchCoordinator {
         for (const r of results) {
             let score = 0;
             const rNorm = normalize(r.title);
+            const rWords = (r.title || '').toLowerCase().match(/[a-z0-9]+/g) || [];
 
             // Exact title match
             if (rNorm === targetNorm) {
@@ -174,21 +183,38 @@ export class SearchCoordinator {
             } else if (rNorm.includes(targetNorm) || targetNorm.includes(rNorm)) {
                 score += 50;
             } else {
-                const targetWords = targetNorm.match(/[a-z0-9]+/g) || [];
-                const rWords = rNorm.match(/[a-z0-9]+/g) || [];
+                // Word overlap scoring
                 const overlap = targetWords.filter(w => rWords.includes(w)).length;
-                score += overlap * 10;
+                const maxWords = Math.max(targetWords.length, rWords.length, 1);
+                const overlapRatio = overlap / maxWords;
+                score += overlapRatio * 80;
             }
 
-            // Episode count matching — heavily penalize mismatches
+            // Season number matching — critical for sequels
+            if (targetSeason) {
+                const rSeasonMatch = r.title?.match(/(?:\s+(\d)$|\s+season\s*(\d+)|\s+(\d+)(?:st|nd|rd|th)\s+season)/i);
+                const rSeason = rSeasonMatch ? parseInt(rSeasonMatch[1] || rSeasonMatch[2] || rSeasonMatch[3]) : null;
+                if (rSeason === targetSeason) {
+                    score += 50; // strong season match
+                } else if (rSeason && rSeason !== targetSeason) {
+                    score -= 60; // wrong season — heavy penalty
+                } else if (!rSeason && targetSeason > 1) {
+                    score -= 30; // looking for S2+ but result has no season marker
+                }
+            }
+
+            // Episode count — lenient for airing shows (AniWatch may have fewer)
             const rEpCount = r.episodes?.sub || r.episodes?.total || 0;
             if (expectedEps && rEpCount) {
                 if (rEpCount === expectedEps) {
-                    score += 60; // strong match
+                    score += 40;
+                } else if (rEpCount < expectedEps) {
+                    // AniWatch has fewer — likely airing, don't penalize much
+                    score += 10;
                 } else if (Math.abs(rEpCount - expectedEps) <= 2) {
-                    score += 20; // close enough (sometimes counts differ slightly)
+                    score += 20;
                 } else {
-                    // Big mismatch: e.g. movie (1 ep) vs TV (12 eps)
+                    // AniWatch has MORE eps than expected — wrong show
                     score -= 40;
                 }
             }
@@ -200,12 +226,18 @@ export class SearchCoordinator {
 
             // Prefer results where the title is closer in length
             const lenDiff = Math.abs(rNorm.length - targetNorm.length);
-            score -= lenDiff * 0.5;
+            score -= lenDiff * 0.3;
 
             if (score > bestScore) {
                 bestScore = score;
                 best = r;
             }
+        }
+
+        // Minimum quality threshold — reject bad matches
+        if (bestScore < 25) {
+            console.warn(`[Coordinator] No good AniWatch match for "${title}" (best score: ${bestScore.toFixed(1)})`);
+            return null;
         }
 
         return best;
