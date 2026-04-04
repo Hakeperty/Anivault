@@ -16,9 +16,19 @@ const MANGAKATANA_BASE = 'https://mangakatana.com';
 export class MangaKatanaScraper {
     static async search(query) {
         try {
-            const searchUrl = `${MANGAKATANA_BASE}/?search=${encodeURIComponent(query)}&search_by=m_name`;
-            const html = await http.getHTML(searchUrl);
-            return this.parseSearchResults(html);
+            // Try m_name first (manga name search)
+            const mNameUrl = `${MANGAKATANA_BASE}/?search=${encodeURIComponent(query)}&search_by=m_name`;
+            const html = await http.getHTML(mNameUrl);
+            let results = this.parseSearchResults(html);
+
+            // If no results, try book_name (broader search, better for English titles)
+            if (results.length === 0) {
+                const bookUrl = `${MANGAKATANA_BASE}/?search=${encodeURIComponent(query)}&search_by=book_name`;
+                const html2 = await http.getHTML(bookUrl);
+                results = this.parseSearchResults(html2);
+            }
+
+            return results;
         } catch (error) {
             console.error('MangaKatana search error:', error);
             return [];

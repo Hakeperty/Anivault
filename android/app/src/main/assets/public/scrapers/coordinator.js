@@ -287,6 +287,21 @@ export class SearchCoordinator {
                             if (!match) match = this._bestMangaMatch(katanaResults, mangaTitle);
                         }
 
+                        // Last resort: look up English title via Jikan
+                        if (!match) {
+                            try {
+                                const englishTitle = await this._lookupEnglishTitle(mangaTitle);
+                                if (englishTitle && englishTitle !== mangaTitle && englishTitle !== altTitle) {
+                                    console.log('[Coordinator] Jikan English title lookup:', englishTitle);
+                                    katanaResults = await MangaKatanaScraper.search(englishTitle);
+                                    match = this._bestMangaMatch(katanaResults, englishTitle);
+                                    if (!match) match = this._bestMangaMatch(katanaResults, mangaTitle);
+                                }
+                            } catch (e) {
+                                console.warn('[Coordinator] Jikan title lookup failed:', e.message);
+                            }
+                        }
+
                         if (match) chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
                     } else if (katanaTarget.startsWith('http') || katanaTarget.startsWith('/')) {
                         chapters = await MangaKatanaScraper.getChapters(katanaTarget);
@@ -389,6 +404,34 @@ export class SearchCoordinator {
 
             console.log(`[Coordinator] Found MangaDex fallback: ${targetCh.id}`);
             return normalizePages(await MangaDexScraper.getPages(targetCh.id));
+        }
+    }
+
+    /**
+     * Look up the English title of a manga via Jikan (MyAnimeList).
+     * Useful when MangaDex only has the romaji title and MangaKatana
+     * needs the English name to find it.
+     */
+    static async _lookupEnglishTitle(mangaTitle) {
+        try {
+            const url = `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(mangaTitle)}&limit=5`;
+            const data = await (await fetch(url)).json();
+            if (!data.data?.length) return null;
+
+            const targetNorm = this._normalizeTitle(mangaTitle);
+            for (const item of data.data) {
+                const titleNorm = this._normalizeTitle(item.title || '');
+                const overlap = this._wordOverlapScore(targetNorm, titleNorm);
+                if (overlap >= 0.6 && item.title_english) {
+                    return item.title_english;
+                }
+            }
+            // Fallback: if first result has English title, use it
+            if (data.data[0].title_english) return data.data[0].title_english;
+            return null;
+        } catch (e) {
+            console.warn('[Coordinator] Jikan manga lookup failed:', e.message);
+            return null;
         }
     }
 
