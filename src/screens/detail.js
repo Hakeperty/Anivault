@@ -425,6 +425,7 @@ export class DetailScreen {
                 const libraryItem = {
                     id: this.item.id,
                     title: this.item.title,
+                    titleEnglish: this.item.titleEnglish || '',
                     coverImage: this.item.coverImage || this.item.coverUrl || '',
                     description: this.item.description || '',
                     type: this.item.type || 'anime',
@@ -461,6 +462,7 @@ export class DetailScreen {
                 const recItem = {
                     id: this.item.id,
                     title: this.item.title,
+                    titleEnglish: this.item.titleEnglish || '',
                     coverImage: this.item.coverImage || this.item.coverUrl || '',
                     description: this.item.description || '',
                     type: this.item.type || 'anime',
@@ -559,6 +561,7 @@ export class DetailScreen {
                 await db.addToLibrary({
                     id: this.item.id,
                     title: this.item.title,
+                    titleEnglish: this.item.titleEnglish || '',
                     coverImage: this.item.coverImage || this.item.coverUrl || '',
                     description: this.item.description || '',
                     type: this.item.type || type,

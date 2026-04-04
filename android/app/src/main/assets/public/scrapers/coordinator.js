@@ -371,6 +371,7 @@ export class SearchCoordinator {
 
     static async getChapterPages(chapterId, source = 'mangakatana', mangaTitle = '', chapterNumber = null, altTitle = '') {
         const normalizedSource = String(source || '').toLowerCase();
+        const chapterIdString = String(chapterId || '');
         const normalizePages = (pages) => (pages || [])
             .map((page) => (typeof page === 'string' ? page : page?.url))
             .filter(Boolean);
@@ -406,13 +407,17 @@ export class SearchCoordinator {
         }
 
         // Last resort: try passing ID directly to other source (may work for URL-based IDs)
-        try {
-            if (normalizedSource === 'mangakatana') {
-                pages = normalizePages(await MangaDexScraper.getPages(chapterId));
-            } else {
-                pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
+        if (chapterIdString.startsWith('http') || chapterIdString.startsWith('/')) {
+            try {
+                if (normalizedSource === 'mangakatana') {
+                    pages = normalizePages(await MangaDexScraper.getPages(chapterId));
+                } else {
+                    pages = normalizePages(await MangaKatanaScraper.getPages(chapterId));
+                }
+            } catch (e) {
+                console.debug('[Coordinator] Direct ID page fallback failed:', e.message);
             }
-        } catch (_) {}
+        }
 
         // MangaPill as ultimate page fallback
         if ((!pages || pages.length === 0) && mangaTitle && chapterNumber !== null) {
@@ -421,7 +426,8 @@ export class SearchCoordinator {
                 const searchTerms = [mangaTitle, altTitle].filter(Boolean);
                 for (const term of searchTerms) {
                     const pillResults = await MangaPillScraper.search(term);
-                    const match = this._bestMangaMatch(pillResults, mangaTitle) ||
+                    const match = this._bestMangaMatch(pillResults, term) ||
+                        this._bestMangaMatch(pillResults, mangaTitle) ||
                         (altTitle ? this._bestMangaMatch(pillResults, altTitle) : null);
                     if (match) {
                         const chapters = await MangaPillScraper.getChapters(match.url || match.id);
@@ -461,6 +467,19 @@ export class SearchCoordinator {
                 // MangaKatana may return Japanese-titled results for English searches
                 if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
             }
+            // If altTitle is missing, try deriving English title via Jikan
+            if (!match && !altTitle && mangaTitle) {
+                try {
+                    const englishTitle = await this._lookupEnglishTitle(mangaTitle);
+                    if (englishTitle && englishTitle !== mangaTitle) {
+                        searchResults = await MangaKatanaScraper.search(englishTitle);
+                        match = this._bestMangaMatch(searchResults, englishTitle);
+                        if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
+                    }
+                } catch (e) {
+                    console.warn('[Coordinator] Jikan title lookup failed:', e.message);
+                }
+            }
             if (!match) return [];
 
             const chapters = await MangaKatanaScraper.getChapters(match.url || match.id);
@@ -471,10 +490,28 @@ export class SearchCoordinator {
             return normalizePages(await MangaKatanaScraper.getPages(targetCh.url || targetCh.id));
         } else {
             // MangaKatana failed → try MangaDex
-            const searchResults = await MangaDexScraper.search(mangaTitle);
-            if (!searchResults.length) return [];
+            let searchResults = await MangaDexScraper.search(mangaTitle);
+            let match = this._bestMangaMatch(searchResults, mangaTitle);
 
-            const match = this._bestMangaMatch(searchResults, mangaTitle);
+            // Retry with English alt title if Japanese title didn't match
+            if (!match && altTitle && altTitle !== mangaTitle) {
+                searchResults = await MangaDexScraper.search(altTitle);
+                match = this._bestMangaMatch(searchResults, altTitle);
+                if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
+            }
+            // If altTitle is missing, try deriving English title via Jikan
+            if (!match && !altTitle && mangaTitle) {
+                try {
+                    const englishTitle = await this._lookupEnglishTitle(mangaTitle);
+                    if (englishTitle && englishTitle !== mangaTitle) {
+                        searchResults = await MangaDexScraper.search(englishTitle);
+                        match = this._bestMangaMatch(searchResults, englishTitle);
+                        if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
+                    }
+                } catch (e) {
+                    console.warn('[Coordinator] Jikan title lookup failed:', e.message);
+                }
+            }
             if (!match) return [];
 
             const chapters = await MangaDexScraper.getChapters(match.id);
