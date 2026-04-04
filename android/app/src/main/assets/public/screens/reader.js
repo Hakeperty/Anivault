@@ -7,9 +7,10 @@ import { showToast } from '../utils/toast.js';
 import { SearchCoordinator } from '../scrapers/coordinator.js';
 
 export class ReaderScreen {
-    constructor(libraryItem, chapter) {
+    constructor(libraryItem, chapter, allChapters = []) {
         this.libraryItem = libraryItem;
         this.chapter = chapter;
+        this.allChapters = allChapters;
         this.pages = [];
         this.currentPage = 0;
         this.isZoomed = false;
@@ -21,6 +22,7 @@ export class ReaderScreen {
         this.preloadedImages = new Map();
         this.controlsVisible = true;
         this.controlsTimeout = null;
+        this.loadingNextChapter = false;
     }
 
     async render() {
@@ -319,7 +321,7 @@ export class ReaderScreen {
         if (this.currentPage < this.pages.length - 1) {
             this.showPage(this.currentPage + 1);
         } else {
-            showToast('Last page', 'info');
+            this.loadNextChapter();
         }
     }
 
@@ -327,8 +329,70 @@ export class ReaderScreen {
         if (this.currentPage > 0) {
             this.showPage(this.currentPage - 1);
         } else {
-            showToast('First page', 'info');
+            this.loadPrevChapter();
         }
+    }
+
+    /** Find the next chapter in the sorted list and navigate to it */
+    async loadNextChapter() {
+        if (this.loadingNextChapter) return;
+        const nextCh = this._getAdjacentChapter(1);
+        if (!nextCh) {
+            showToast('Last chapter', 'info');
+            return;
+        }
+        this.loadingNextChapter = true;
+        showToast(`Loading Chapter ${nextCh.chapter ?? 'next'}…`, 'info');
+        await this.saveCurrentProgress();
+        this.chapter = nextCh;
+        this.pages = [];
+        this.currentPage = 0;
+        this.preloadedImages.clear();
+        this._updateChapterTitle();
+        document.getElementById('reader-loading').style.display = 'flex';
+        document.getElementById('reader-page-container').style.display = 'none';
+        document.getElementById('reader-scroll-container').style.display = 'none';
+        await this.loadPages();
+        this.loadingNextChapter = false;
+    }
+
+    /** Find the previous chapter and navigate to it */
+    async loadPrevChapter() {
+        if (this.loadingNextChapter) return;
+        const prevCh = this._getAdjacentChapter(-1);
+        if (!prevCh) {
+            showToast('First chapter', 'info');
+            return;
+        }
+        this.loadingNextChapter = true;
+        showToast(`Loading Chapter ${prevCh.chapter ?? 'prev'}…`, 'info');
+        await this.saveCurrentProgress();
+        this.chapter = prevCh;
+        this.pages = [];
+        this.currentPage = 0;
+        this.preloadedImages.clear();
+        this._updateChapterTitle();
+        document.getElementById('reader-loading').style.display = 'flex';
+        document.getElementById('reader-page-container').style.display = 'none';
+        document.getElementById('reader-scroll-container').style.display = 'none';
+        await this.loadPages();
+        this.loadingNextChapter = false;
+    }
+
+    /** Get the next (+1) or previous (-1) chapter from allChapters */
+    _getAdjacentChapter(direction) {
+        if (!this.allChapters || this.allChapters.length === 0) return null;
+        const currentIdx = this.allChapters.findIndex(c => c.id === this.chapter?.id);
+        if (currentIdx === -1) return null;
+        const targetIdx = currentIdx + direction;
+        if (targetIdx < 0 || targetIdx >= this.allChapters.length) return null;
+        return this.allChapters[targetIdx];
+    }
+
+    /** Update the chapter title shown in the top bar */
+    _updateChapterTitle() {
+        const titleDiv = document.querySelector('#reader-top-bar div[style*="flex:1"] div:last-child');
+        if (titleDiv) titleDiv.textContent = this.chapter?.title || 'Chapter';
     }
 
     toggleZoom() {
@@ -354,6 +418,8 @@ export class ReaderScreen {
         const container = document.getElementById('reader-scroll-pages');
         if (!container) return;
 
+        const nextCh = this._getAdjacentChapter(1);
+
         container.innerHTML = this.pages.map((url, i) => `
             <div class="scroll-page-wrapper" data-page="${i}" style="width:100%;min-height:200px;position:relative;">
                 <img src="${url}" alt="Page ${i + 1}" style="width:100%;display:block;" 
@@ -364,7 +430,18 @@ export class ReaderScreen {
                     <button class="btn btn-primary btn-small scroll-retry-btn" data-idx="${i}">Retry</button>
                 </div>
             </div>
-        `).join('');
+        `).join('') + (nextCh ? `
+            <div id="scroll-next-chapter" style="width:100%;padding:40px 20px;text-align:center;">
+                <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">End of chapter</p>
+                <button id="scroll-next-ch-btn" class="btn btn-primary" style="padding:10px 24px;font-size:14px;">
+                    Next: Chapter ${nextCh.chapter ?? 'next'}
+                </button>
+            </div>
+        ` : `
+            <div style="width:100%;padding:40px 20px;text-align:center;">
+                <p style="color:var(--text-secondary);font-size:13px;">End of last chapter</p>
+            </div>
+        `);
 
         container.querySelectorAll('.scroll-retry-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -376,6 +453,11 @@ export class ReaderScreen {
                 errDiv.style.display = 'none';
                 img.src = this.pages[idx] + (this.pages[idx].includes('?') ? '&' : '?') + 'retry=' + Date.now();
             });
+        });
+
+        // Next chapter button in scroll mode
+        document.getElementById('scroll-next-ch-btn')?.addEventListener('click', () => {
+            this.loadNextChapter();
         });
     }
 

@@ -64,9 +64,17 @@ export class MangaPillScraper {
 
                 const img = card.querySelector('img');
                 const titleDiv = card.querySelector('div.font-bold, div.leading-tight, .mt-1');
-                const title = titleDiv?.textContent?.trim() ||
+                let title = titleDiv?.textContent?.trim() ||
                     img?.getAttribute('alt')?.trim() || '';
                 if (!title) return;
+                // MangaPill often doubles the title text in nested elements;
+                // detect and deduplicate (e.g. "My Title My Title" → "My Title")
+                if (title.length > 6) {
+                    const half = Math.floor(title.length / 2);
+                    const a = title.substring(0, half).trim();
+                    const b = title.substring(half).trim();
+                    if (a === b) title = a;
+                }
 
                 const coverUrl = img?.getAttribute('src') || img?.getAttribute('data-src') || '';
                 const idMatch = href.match(/\/manga\/(\d+)\//);

@@ -298,17 +298,23 @@ export class SearchCoordinator {
                     }
                 } else {
                     // MangaDex failed → search MangaKatana by title
+                    // Try English alt title FIRST (MangaKatana works much better with English queries)
                     if (mangaTitle) {
-                        let katanaResults = await MangaKatanaScraper.search(mangaTitle);
-                        let match = this._bestMangaMatch(katanaResults, mangaTitle);
+                        let katanaResults;
+                        let match = null;
 
-                        // If Japanese/romaji title didn't match, try English alt title
-                        if (!match && altTitle && altTitle !== mangaTitle) {
-                            console.log('[Coordinator] Retrying MangaKatana with alt title:', altTitle);
+                        if (altTitle && altTitle !== mangaTitle) {
+                            console.log('[Coordinator] Trying MangaKatana with English title:', altTitle);
                             katanaResults = await MangaKatanaScraper.search(altTitle);
                             match = this._bestMangaMatch(katanaResults, altTitle);
-                            // MangaKatana may return Japanese-titled results for English searches
+                            // MangaKatana returns Japanese-titled results for English searches
                             if (!match) match = this._bestMangaMatch(katanaResults, mangaTitle);
+                        }
+
+                        // Then try romaji/Japanese title
+                        if (!match) {
+                            katanaResults = await MangaKatanaScraper.search(mangaTitle);
+                            match = this._bestMangaMatch(katanaResults, mangaTitle);
                         }
 
                         // Last resort: look up English title via Jikan
@@ -340,18 +346,22 @@ export class SearchCoordinator {
         if (!chapters || chapters.length === 0) {
             try {
                 console.log('[Coordinator] Trying MangaPill fallback for', mangaTitle || mangaId);
-                const searchTerms = [mangaTitle, altTitle].filter(Boolean);
+                // Build search terms: English first (more reliable), then romaji
+                const searchTerms = [];
+                if (altTitle) searchTerms.push(altTitle);
+                if (mangaTitle && mangaTitle !== altTitle) searchTerms.push(mangaTitle);
                 // Also try Jikan English title if we don't have altTitle
                 if (!altTitle && mangaTitle) {
                     try {
                         const enTitle = await this._lookupEnglishTitle(mangaTitle);
-                        if (enTitle && enTitle !== mangaTitle) searchTerms.push(enTitle);
+                        if (enTitle && enTitle !== mangaTitle) searchTerms.unshift(enTitle);
                     } catch (_) {}
                 }
 
                 for (const term of searchTerms) {
                     const pillResults = await MangaPillScraper.search(term);
-                    const match = this._bestMangaMatch(pillResults, mangaTitle) ||
+                    const match = this._bestMangaMatch(pillResults, term) ||
+                        this._bestMangaMatch(pillResults, mangaTitle) ||
                         (altTitle ? this._bestMangaMatch(pillResults, altTitle) : null);
                     if (match) {
                         chapters = await MangaPillScraper.getChapters(match.url || match.id);
@@ -456,17 +466,21 @@ export class SearchCoordinator {
             .filter(Boolean);
 
         if (failedSource === 'mangadex') {
-            // MangaDex failed → try MangaKatana
-            let searchResults = await MangaKatanaScraper.search(mangaTitle);
-            let match = this._bestMangaMatch(searchResults, mangaTitle);
+            // MangaDex failed → try MangaKatana (English title first, more reliable)
+            let searchResults;
+            let match = null;
 
-            // Retry with English alt title if Japanese title didn't match
-            if (!match && altTitle && altTitle !== mangaTitle) {
+            if (altTitle && altTitle !== mangaTitle) {
                 searchResults = await MangaKatanaScraper.search(altTitle);
                 match = this._bestMangaMatch(searchResults, altTitle);
-                // MangaKatana may return Japanese-titled results for English searches
                 if (!match) match = this._bestMangaMatch(searchResults, mangaTitle);
             }
+
+            if (!match) {
+                searchResults = await MangaKatanaScraper.search(mangaTitle);
+                match = this._bestMangaMatch(searchResults, mangaTitle);
+            }
+
             // If altTitle is missing, try deriving English title via Jikan
             if (!match && !altTitle && mangaTitle) {
                 try {

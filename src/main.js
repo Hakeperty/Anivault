@@ -78,8 +78,8 @@ class AniVaultApp {
 
         // Handle navigation to reader
         document.addEventListener('navigateToReader', async (e) => {
-            const { libraryItem, chapter } = e.detail;
-            await this.loadReaderScreen(libraryItem, chapter);
+            const { libraryItem, chapter, allChapters } = e.detail;
+            await this.loadReaderScreen(libraryItem, chapter, allChapters || []);
         });
 
         // Handle back navigation
@@ -211,7 +211,7 @@ class AniVaultApp {
         }
     }
 
-    async loadReaderScreen(libraryItem, chapter) {
+    async loadReaderScreen(libraryItem, chapter, allChapters = []) {
         const container = document.getElementById('screen-container');
         if (this.currentScreen?.instance?.deactivate) {
             try { this.currentScreen.instance.deactivate(); } catch (e) {}
@@ -219,7 +219,7 @@ class AniVaultApp {
         this.history.push('reader');
         
         try {
-            const readerScreen = new ReaderScreen(libraryItem, chapter);
+            const readerScreen = new ReaderScreen(libraryItem, chapter, allChapters);
             const html = await readerScreen.render();
             container.innerHTML = html;
             await readerScreen.afterRender();

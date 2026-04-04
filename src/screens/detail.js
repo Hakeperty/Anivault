@@ -382,7 +382,11 @@ export class DetailScreen {
                             chapter: {
                                 ...chapter,
                                 source: chapter.source || this.item.source || this.source || 'mangakatana'
-                            }
+                            },
+                            allChapters: this.chapters.map(ch => ({
+                                ...ch,
+                                source: ch.source || this.item.source || this.source || 'mangakatana'
+                            }))
                         }
                     }));
                 }
