@@ -314,6 +314,15 @@ export class Database {
         });
     }
 
+    async clearRecommendations() {
+        const tx = this.db.transaction(['userRecommends'], 'readwrite');
+        tx.objectStore('userRecommends').clear();
+        return new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    }
+
     // Statistics
     async getLibraryStats() {
         const library = await this.getLibrary();

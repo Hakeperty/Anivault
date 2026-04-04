@@ -103,9 +103,13 @@ export class DiscoverScreen {
             this._userRecommends = userRecs;
         } catch (e) { this._userRecommends = []; }
 
-        // Use cache if less than 10 minutes old
-        const CACHE_TTL = 10 * 60 * 1000;
-        if (this._cache && (Date.now() - this._cacheTime < CACHE_TTL)) {
+        // Use cache if less than configured duration old
+        let cacheTTL = 10 * 60 * 1000; // default 10 min
+        try {
+            const cacheMins = await db.getSetting('discoverCache', '10');
+            cacheTTL = parseInt(cacheMins, 10) * 60 * 1000;
+        } catch {}
+        if (this._cache && (Date.now() - this._cacheTime < cacheTTL)) {
             container.innerHTML = this._buildContinueWatching(continueWatching)
                 + this._buildUserRecommends()
                 + this._buildRecommendations()
