@@ -107,12 +107,18 @@ export class DiscoverScreen {
 
         try {
             // Fetch trending and recommendations in parallel
-            const [data, recs] = await Promise.all([
+            const settled = await Promise.allSettled([
                 SearchCoordinator.getTrending(),
                 libraryItems.length > 0
                     ? SearchCoordinator.getRecommendations(libraryItems)
                     : Promise.resolve([])
             ]);
+
+            const data = settled[0].status === 'fulfilled' ? settled[0].value : {
+                airing: [], popular: [], upcoming: [], seasonNow: [],
+                mangaPopular: [], mangaRecent: [], weeklySchedule: {}
+            };
+            const recs = settled[1].status === 'fulfilled' ? settled[1].value : [];
 
             this._cache = data;
             this._cacheTime = Date.now();

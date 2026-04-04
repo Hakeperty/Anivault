@@ -440,15 +440,25 @@ export class SearchCoordinator {
 
     /** Get trending/popular content for the Discover screen */
     static async getTrending() {
-        const [airing, popular, upcoming, seasonNow, mangaPopular, mangaRecent, weeklySchedule] = await Promise.allSettled([
+        // Fetch main data first (4 Jikan + 2 MangaDex calls)
+        const [airing, popular, upcoming, seasonNow, mangaPopular, mangaRecent] = await Promise.allSettled([
             JikanScraper.getTopAiring(20),
             JikanScraper.getTopPopular(20),
             JikanScraper.getUpcoming(20),
             JikanScraper.getSeasonNow(25),
             MangaDexScraper.getPopular(20),
-            MangaDexScraper.getRecentlyUpdated(15),
-            JikanScraper.getWeeklySchedule()
+            MangaDexScraper.getRecentlyUpdated(15)
         ]);
+
+        // Delay before schedule fetch to avoid Jikan rate limits
+        await new Promise(r => setTimeout(r, 1200));
+
+        let weeklySchedule = {};
+        try {
+            weeklySchedule = await JikanScraper.getWeeklySchedule();
+        } catch (e) {
+            console.warn('Weekly schedule fetch failed:', e.message);
+        }
 
         return {
             airing: airing.status === 'fulfilled' ? airing.value : [],
@@ -457,7 +467,7 @@ export class SearchCoordinator {
             seasonNow: seasonNow.status === 'fulfilled' ? seasonNow.value : [],
             mangaPopular: mangaPopular.status === 'fulfilled' ? mangaPopular.value : [],
             mangaRecent: mangaRecent.status === 'fulfilled' ? mangaRecent.value : [],
-            weeklySchedule: weeklySchedule.status === 'fulfilled' ? weeklySchedule.value : {}
+            weeklySchedule
         };
     }
 

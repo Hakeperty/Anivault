@@ -102,7 +102,7 @@ export class JikanScraper {
      */
     static async getScheduleByDay(day = 'monday', limit = 25) {
         try {
-            const url = `${JIKAN_API}/schedules?day=${encodeURIComponent(day)}&limit=${limit}&sfw=true`;
+            const url = `${JIKAN_API}/schedules?filter=${encodeURIComponent(day)}&limit=${limit}&sfw=true`;
             const data = await http.getJSON(url);
             return this.parseSearchResults(data).map(item => ({
                 ...item,
@@ -120,13 +120,22 @@ export class JikanScraper {
      */
     static async getWeeklySchedule() {
         const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-        const results = await Promise.allSettled(
-            days.map(day => this.getScheduleByDay(day, 8))
-        );
         const schedule = {};
-        days.forEach((day, i) => {
-            schedule[day] = results[i].status === 'fulfilled' ? results[i].value : [];
-        });
+
+        // Fetch in batches of 2 with delays to respect Jikan rate limits (~3 req/s)
+        for (let i = 0; i < days.length; i += 2) {
+            const batch = days.slice(i, i + 2);
+            const results = await Promise.allSettled(
+                batch.map(day => this.getScheduleByDay(day, 8))
+            );
+            batch.forEach((day, j) => {
+                schedule[day] = results[j].status === 'fulfilled' ? results[j].value : [];
+            });
+            if (i + 2 < days.length) {
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
         return schedule;
     }
 
