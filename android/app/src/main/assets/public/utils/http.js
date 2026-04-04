@@ -123,7 +123,9 @@ class HttpClient {
     _isCorsApi(url) {
         return url.includes('api.jikan.moe') ||
                url.includes('api.mangadex.org') ||
-               url.includes('uploads.mangadex.org');
+               url.includes('uploads.mangadex.org') ||
+               url.includes('integrate.api.nvidia.com') ||
+               url.includes('api.duckduckgo.com');
     }
 }
 
