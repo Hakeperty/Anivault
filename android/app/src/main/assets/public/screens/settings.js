@@ -14,7 +14,8 @@ const SETTING_DEFAULTS = {
     contentType: 'both',
     readerMode: 'page',
     nsfwFilter: 'on',
-    discoverCache: '10'
+    discoverCache: '10',
+    aiMatching: 'on'
 };
 
 export class SettingsScreen {
@@ -88,6 +89,20 @@ export class SettingsScreen {
                         { value: '30', label: '30 minutes' },
                         { value: '60', label: '1 hour' }
                     ])}
+                </div>
+
+                <div class="settings-group">
+                    <h3 class="settings-group-title">AI Matching</h3>
+                    <div class="settings-item static" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <div class="settings-item-info" style="flex:1;min-width:0;">
+                            <span class="settings-item-title">NVIDIA API Key</span>
+                            <span class="settings-item-desc">Powers smart title matching via GLM5. Get a free key from <b>build.nvidia.com</b></span>
+                        </div>
+                        <input id="ai-api-key-input" type="password" placeholder="nvapi-..." 
+                            value="${localStorage.getItem('anivault_ai_api_key') || ''}"
+                            style="width:100%;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;font-size:13px;font-family:monospace;" />
+                    </div>
+                    ${this.renderToggle('aiMatching', 'AI-Powered Matching', 'Use NVIDIA AI + DuckDuckGo to improve anime/manga title matching')}
                 </div>
 
                 <div class="settings-group">
@@ -254,12 +269,32 @@ export class SettingsScreen {
 
         document.getElementById('settings-clear-recs')?.addEventListener('click', () => this.showClearRecsConfirmation());
         document.getElementById('settings-clear-library')?.addEventListener('click', () => this.showClearConfirmation());
+
+        // AI API key — save to localStorage (not IndexedDB) for quick access
+        const aiKeyInput = document.getElementById('ai-api-key-input');
+        if (aiKeyInput) {
+            let saveTimer;
+            aiKeyInput.addEventListener('input', () => {
+                clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                    const val = aiKeyInput.value.trim();
+                    if (val) {
+                        localStorage.setItem('anivault_ai_api_key', val);
+                    } else {
+                        localStorage.removeItem('anivault_ai_api_key');
+                    }
+                    showToast('API key saved', 'success');
+                }, 800);
+            });
+        }
     }
 
     async saveSetting(key, value) {
         try {
             await db.setSetting(key, value);
             this.settings[key] = value;
+            // Mirror to localStorage for quick synchronous access from scrapers
+            localStorage.setItem(`anivault_settings_${key}`, value);
             showToast('Setting saved', 'success');
         } catch (err) {
             console.error('Failed to save setting:', err);
