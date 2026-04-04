@@ -2,56 +2,82 @@
 
 **Local Anime & Manga Library App for Android**
 
-A fully-functional, client-side anime and manga discovery and library management app built with Capacitor.js, vanilla JavaScript, and IndexedDB. Search across multiple sources, track your progress, and build your personal anime/manga library—all stored locally on your device.
+A fully-functional anime and manga discovery, streaming, and reading app built with Capacitor.js, vanilla JavaScript, and IndexedDB. Search across multiple sources, stream anime, read manga, track your progress, and build your personal library—all stored locally on your device.
 
-![Stars](https://img.shields.io/badge/status-production--ready-brightgreen?style=flat-square)
+![Status](https://img.shields.io/badge/status-production--ready-brightgreen?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
-![Code Size](https://img.shields.io/badge/code-~50k%20LOC-brightgreen?style=flat-square)
+![Build](https://img.shields.io/badge/build-GitHub%20Actions-blue?style=flat-square)
 
 ---
 
 ## ✨ Features
 
-### 📚 Library Management
-- **Grid Display** - 2-column responsive layout for your library
-- **Progress Tracking** - Episode/chapter indicators and percentage bars
-- **Continue Watching/Reading** - Quick access carousel
-- **Smart Search** - Search within your library instantly
-- **Delete & Manage** - Long-press to delete titles with storage info
+### 📺 Discover & Browse
+- **Weekly Airing Schedule** — Tabbed Mon–Sun view showing what anime airs each day (JST), with broadcast times and auto-highlighted today
+- **This Season / Top Airing / Most Popular** — Curated sections powered by Jikan (MAL) API
+- **Popular & Recently Updated Manga** — MangaDex-powered manga discovery
+- **Personalized Recommendations** — Genre-based suggestions from your library history
+- **User Recommends** — Community-style recommendation board stored locally
+- **Scroll-to-Top** — Floating button for quick navigation
 
 ### 🔍 Multi-Source Search
-Search across **3+ anime and manga sources simultaneously**:
-- **AniWatch** - Primary anime metadata source (local backend + mirror fallback)
-- **MangaDex** - Official manga REST API integration
-- **MangaKatana** - Primary manga scraper
+Search across **4 anime and manga sources simultaneously**:
+- **Jikan (MyAnimeList)** — Anime metadata, details, schedule, recommendations
+- **AniWatch** — Anime episodes & streaming (HLS)
+- **MangaDex** — Manga chapters & pages (official REST API)
+- **MangaKatana** — Manga chapters & pages (HTML scraping)
+
+### 📖 Smart Cross-Source Fallback
+- When MangaDex pages fail for a chapter, automatically searches MangaKatana by title and chapter number (and vice versa)
+- Unicode NFKD-normalized title matching with word-overlap scoring prevents wrong-manga matches
+- Returns nothing rather than serving the wrong content
+
+### 📚 Library Management
+- **Grid Display** — 2-column responsive layout
+- **Progress Tracking** — Episode/chapter indicators and percentage bars
+- **Continue Watching/Reading** — Quick-access carousel on Discover
+- **Smart Search** — Filter within your library
+- **Delete & Manage** — Long-press to remove titles
+
+### 🎬 Anime Streaming
+- **HLS.js Integration** — Adaptive quality video playback
+- **Custom Controls** — Play/pause, seek, fullscreen, speed
+- **Audio Toggle** — Switch between sub/dub when available
+- **Episode Navigation** — Previous/next episode buttons
+- **Progress Auto-Save** — Resumes where you left off
+
+### 📖 Manga Reader
+- **Three Reading Modes** — Vertical scroll, page-by-page (LTR/RTL)
+- **Touch Gestures** — Tap left/right to turn pages, pinch to zoom
+- **Persistent Mode** — Reader remembers your preferred mode
+- **Chapter Navigation** — Previous/next chapter buttons
 
 ### 💾 Local Storage
-- **IndexedDB** - 4 stores: Library, Progress, Downloads, Settings
-- **Persistent** - Data survives app restarts
-- **Private** - Everything stored locally on your device
-- **Fast** - Efficient database queries (<100ms for library display)
-
-### 🎬 Video & Reader (Structure Ready)
-- **Video Player** - HLS.js integration ready for stream playback
-- **Manga Reader** - Touch gesture support ready for page navigation
-- **Custom Controls** - Playback speed, subtitles, fullscreen
-- **Reading Modes** - Vertical scroll, left-to-right, right-to-left
+- **IndexedDB v2** — 5 stores: Library, Progress, Downloads, Settings, UserRecommends
+- **Persistent** — Data survives app restarts
+- **Private** — Everything stored locally on your device
+- **Fast** — Efficient queries (<100ms for library display)
 
 ### 🌙 Dark AMOLED Theme
-- **Battery Optimized** - Pure black background (#0a0a0a)
-- **Orange Accents** - Vibrant highlights (#FF6B35)
-- **Responsive Design** - Works on all screen sizes
-- **Touch Optimized** - Large buttons and spacing for mobile
+- **Battery Optimized** — Pure black background (#0a0a0a)
+- **Gradient Accents** — Vibrant section-specific highlights
+- **Responsive Design** — Works on all screen sizes
+- **Touch Optimized** — Large buttons and spacing for mobile
 
 ---
 
 ## 🚀 Quick Start
 
-### Installation
+### Install from APK (easiest)
+
+Push to `main` triggers a GitHub Actions CI build. Download the latest `anivault-debug` artifact from the [Actions tab](../../actions).
+
+### Build Locally
 
 ```bash
-# Clone or navigate to project
-cd /root/anivault
+# Clone
+git clone https://github.com/Hakeperty/Anivault.git
+cd Anivault
 
 # Install dependencies
 npm install
@@ -59,348 +85,194 @@ npm install
 # Sync Capacitor
 npx cap sync
 
-# Build APK (requires Android SDK)
-cd android
-./gradlew assembleDebug
+# Build APK (requires Android SDK on x86_64)
+cd android && ./gradlew assembleDebug
 
-# APK Output: android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-### Deploy to Android
-
-```bash
-# Install via ADB
-adb install android/app/build/outputs/apk/debug/app-debug.apk
-
-# Or copy APK to device and install manually
-```
-
-### Browser Testing (Development)
-
-```bash
-# Open in browser
-open src/index.html
-# or
-firefox src/index.html
+# APK at: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ---
 
-## �� Project Structure
+## 📁 Project Structure
 
 ```
-anivault/
+Anivault/
 ├── src/
-│   ├── index.html              ← App entry point
-│   ├── main.js                 ← Router & navigation (7.8 KB)
+│   ├── index.html               ← App entry point
+│   ├── main.js                  ← Router & navigation
 │   ├── styles/
-│   │   └── global.css          ← Dark AMOLED theme (800 lines)
-│   ├── screens/                ← 7 screen components
-│   │   ├── library.js          ✅ Complete
-│   │   ├── search.js           🔶 Ready for integration
-│   │   ├── detail.js           🔶 Ready for integration
-│   │   ├── player.js           🔶 HLS.js ready
-│   │   ├── reader.js           🔶 Gestures ready
-│   │   ├── downloads.js        🔶 UI stub
-│   │   └── settings.js         🔶 UI stub
-│   ├── scrapers/               ← Multi-source content
-│   │   ├── coordinator.js      ← Orchestration (5.1 KB)
-│   │   ├── aniwatch.js         ← Anime primary scraper (backend + mirrors)
-│   │   ├── mangakatana.js      ← Manga primary scraper
-│   │   └── mangadex.js         ← Manga secondary API source
+│   │   └── global.css           ← Dark AMOLED theme (~2000 lines)
+│   ├── screens/
+│   │   ├── discover.js          ← Home: schedule, trending, recommendations
+│   │   ├── library.js           ← Personal library grid
+│   │   ├── search.js            ← Multi-source search UI
+│   │   ├── detail.js            ← Anime/manga detail + episode/chapter list
+│   │   ├── player.js            ← HLS video player
+│   │   ├── reader.js            ← Manga reader (3 modes)
+│   │   ├── downloads.js         ← Download queue
+│   │   └── settings.js          ← App settings
+│   ├── scrapers/
+│   │   ├── coordinator.js       ← Multi-source orchestration & fallback
+│   │   ├── jikan.js             ← MyAnimeList API (search, schedule, recs)
+│   │   ├── aniwatch.js          ← Anime episodes & streaming
+│   │   ├── mangadex.js          ← MangaDex API (chapters, pages)
+│   │   └── mangakatana.js       ← MangaKatana scraper (chapters, pages)
 │   ├── db/
-│   │   └── indexeddb.js        ← Database (10.7 KB)
+│   │   └── indexeddb.js         ← IndexedDB v2 database layer
 │   └── utils/
-│       └── toast.js            ← Notifications (522 bytes)
-├── android/                    ← Capacitor Android project
-├── package.json                ← Dependencies
-├── capacitor.config.json       ← Capacitor config
-└── vite.config.js              ← Build config
+│       ├── http.js              ← HTTP/fetch wrapper
+│       └── toast.js             ← Toast notifications
+├── android/                     ← Capacitor Android shell
+├── .github/workflows/           ← CI: auto-build on push
+├── package.json
+├── capacitor.config.json
+└── vite.config.js
 ```
 
 ---
 
-## 📊 Code Statistics
+## 🔌 API & Architecture
 
-| Metric | Value |
-|--------|-------|
-| JavaScript Files | 14 |
-| JavaScript LOC | ~49,900 |
-| CSS Lines | ~800 |
-| Total LOC | ~50,700 |
-| Screen Components | 7 |
-| Database Methods | 10 |
-| Content Sources | 4 (2 anime, 2 manga) |
-| npm Dependencies | 15 |
-
----
-
-## 🎯 Features Status
-
-### ✅ Complete (Production-Ready)
-- [x] App Router & Navigation
-- [x] IndexedDB Database Layer
-- [x] Dark AMOLED UI Theme
-- [x] Library Screen (full grid + search)
-- [x] Multi-Source Content Scrapers
-- [x] Capacitor Android Integration
-- [x] Toast Notifications
-- [x] Error Handling
-
-### 🔶 Ready for Integration
-- [ ] Search Screen (coordinator ready)
-- [ ] Detail Screen (episode/chapter lists)
-- [ ] Video Player (HLS.js library installed)
-- [ ] Manga Reader (gesture support)
-- [ ] Downloads Manager (queue UI)
-- [ ] Settings Screen (preferences)
-
----
-
-## 💾 Database Schema
-
-### Library Store
-```javascript
-{
-  id: 'demon-slayer-1',
-  title: 'Demon Slayer',
-  type: 'anime',
-  source: 'aniwatch',
-  coverUrl: 'https://...',
-  description: 'A boy joins...',
-  genres: ['Action', 'Supernatural'],
-  addedAt: timestamp
-}
-```
-
-### Progress Store
-```javascript
-{
-  libraryId: 'demon-slayer-1',
-  episodeOrChapterId: 'ep-1',
-  number: 1,
-  completed: false,
-  watchedSeconds: 1250,
-  lastAccessedAt: timestamp
-}
-```
-
-### Downloads & Settings
-Full CRUD operations available for download queue management and user preferences.
-
----
-
-## 🔌 API Integration
-
-### Multi-Source Search
+### Scraper Coordinator
 ```javascript
 import { SearchCoordinator } from './src/scrapers/coordinator.js';
 
-// Search all sources
+// Search all sources (anime + manga)
 const results = await SearchCoordinator.searchAll('Demon Slayer');
 
-// Search specific type
-const anime = await SearchCoordinator.searchAnime('Jujutsu Kaisen');
-const manga = await SearchCoordinator.searchManga('Chainsaw Man');
+// Trending data (anime sections + manga + weekly schedule)
+const trending = await SearchCoordinator.getTrending();
 
-// Get episodes
-const episodes = await SearchCoordinator.getAnimeEpisodes(id, url, source);
+// Episodes with smart title matching
+const episodes = await SearchCoordinator.getAnimeEpisodes(id, url, source, title, expectedEps);
+
+// Chapters with cross-source fallback
+const chapters = await SearchCoordinator.getMangaChapters(id, source, url, title);
+
+// Pages with automatic fallback to alternate source
+const pages = await SearchCoordinator.getChapterPages(chapterId, source, title, chapterNumber);
 ```
 
-### Database Operations
+### Database
 ```javascript
 import { db } from './src/db/indexeddb.js';
 
-// Add to library
-await db.addToLibrary(title);
-
-// Get library
+await db.addToLibrary(item);
 const library = await db.getLibrary();
-
-// Save progress
 await db.saveProgress(id, episodeNum, chapterNum);
-
-// Settings
-await db.saveSetting('quality', '720p');
+await db.addRecommendation(item);       // User Recommends
+const recs = await db.getRecommendations();
 ```
 
 ---
 
 ## 🌐 Content Sources
 
-### Anime Sources
-| Source | Type | Status | Features |
-|--------|------|--------|----------|
-| AniWatch | Scraping + local metadata backend | ✅ Active | Metadata, episodes, mirror fallback |
+### Anime
+| Source | Type | Role | Features |
+|--------|------|------|----------|
+| Jikan (MAL) | REST API | Metadata, search, schedule | Details, genres, scores, airing schedule, recommendations |
+| AniWatch | Scraping | Streaming | Episode lists, HLS streams, sub/dub |
 
-### Manga Sources
-| Source | Type | Status | Features |
-|--------|------|--------|----------|
-| MangaKatana | Scraping | ✅ Primary | Chapters, pages, search |
-| MangaDex | Official API | ✅ Secondary | Chapters, pages, metadata |
+### Manga
+| Source | Type | Role | Features |
+|--------|------|------|----------|
+| MangaDex | REST API | Primary | Chapters, pages, search, metadata |
+| MangaKatana | Scraping | Fallback | Chapters, pages, search |
+
+Cross-source fallback: if one manga source fails to return pages, the coordinator automatically searches the other source by title + chapter number with fuzzy matching.
 
 ---
 
-## ⚙️ Configuration
+## 🔄 CI/CD
 
-### Capacitor Plugins
-```json
-{
-  "@capacitor/core": "^5.6.0",
-  "@capacitor/android": "^5.6.0",
-  "@capacitor/filesystem": "^5.1.4",
-  "@capacitor/preferences": "^5.0.7",
-  "@capacitor-community/http": "^1.4.1",
-  "hls.js": "^1.4.12"
-}
+GitHub Actions workflow builds a debug APK on every push to `main`:
+
+```yaml
+# .github/workflows/android-build.yml
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci && npx cap sync
+      - run: cd android && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
 ```
 
-### Build Options
-```bash
-# Debug build (fast, unoptimized)
-./gradlew assembleDebug
-
-# Release build (requires signing)
-./gradlew assembleRelease
-```
+Download the `anivault-debug` artifact from the latest passing run.
 
 ---
 
-## 🛠️ Development
+## 🎯 Features Status
 
-### Adding a New Scraper
-```javascript
-// 1. Create src/scrapers/newsource.js
-export class NewSourceScraper {
-    static async search(query) { /* ... */ }
-    static async getEpisodes(url) { /* ... */ }
-}
+### ✅ Complete
+- [x] App Router & Navigation
+- [x] Discover Screen (schedule, trending, recommendations)
+- [x] Weekly Airing Schedule (Jikan, tabbed by day)
+- [x] User Recommends board
+- [x] Multi-Source Search
+- [x] Detail Screen (episodes, chapters, add to library)
+- [x] Video Player (HLS.js streaming, sub/dub)
+- [x] Manga Reader (vertical scroll, page-by-page LTR/RTL)
+- [x] Library Management (grid, search, progress, delete)
+- [x] Continue Watching/Reading carousel
+- [x] IndexedDB v2 Database Layer
+- [x] Smart Cross-Source Manga Fallback
+- [x] Dark AMOLED Theme
+- [x] Toast Notifications
+- [x] Scroll-to-Top button
+- [x] GitHub Actions CI
 
-// 2. Add to coordinator.js
-import { NewSourceScraper } from './newsource.js';
-// Add to searchAll() method
-
-// 3. Immediately available in all searches
-```
-
-### Adding a New Screen
-```javascript
-// 1. Create src/screens/newscreen.js
-export class NewScreen {
-    async render() { /* return HTML */ }
-    async afterRender() { /* attach listeners */ }
-}
-
-// 2. Add to main.js loadScreen()
-// 3. Add button to bottom nav in index.html
-```
-
----
-
-## 📈 Performance
-
-| Operation | Time |
-|-----------|------|
-| Initial Load | ~500ms |
-| Library Display | ~100ms |
-| Search (1 source) | ~2-3s |
-| Search (4 sources) | ~3-5s (parallel) |
-| Database Query | <50ms |
-
----
-
-## 🔒 Security & Privacy
-
-✅ **No server communication** - Purely client-side  
-✅ **No sensitive data** - Public APIs only  
-✅ **Local storage only** - IndexedDB on device  
-✅ **No authentication** - Anonymous usage  
-✅ **CORS limited** - Only to content APIs  
-
----
-
-## 📚 Documentation
-
-- **[BUILD_STATUS.md](./BUILD_STATUS.md)** - Comprehensive build & architecture guide
-- **[QUICKSTART_BUILD.md](./QUICKSTART_BUILD.md)** - 1-minute quick start reference
-- **[GIT_WORKFLOW.md](./GIT_WORKFLOW.md)** - Development best practices
-- **[ANIVAULT_IMPLEMENTATION_SUMMARY.md](./ANIVAULT_IMPLEMENTATION_SUMMARY.md)** - Implementation details
-- **[PROJECT_STATUS.txt](./PROJECT_STATUS.txt)** - Project milestones
-- **[anivault.md](./anivault.md)** - Original specification
-
----
-
-## 🎓 Tech Stack
-
-- **Frontend**: Vanilla JavaScript ES6, HTML5, CSS3
-- **Database**: IndexedDB (browser storage)
-- **Mobile**: Capacitor.js v5.6.0
-- **Build**: Gradle (Android), Vite (web)
-- **Package Manager**: npm
-- **Version Control**: Git
-
----
-
-## 📋 Known Limitations
-
-1. **AniWatch Access Variability** - Direct aniwatch.to access can be blocked; local backend and mirror fallback are used.
-2. **HTML Scraping Fragility** - Dependent on site structure
-3. **No Offline Caching** - Needs Service Worker for content caching
-4. **Video Playback** - HLS.js not yet integrated
-5. **Download Manager** - Queue UI only, no background tasks
-
----
-
-## 🚧 Next Steps
-
-1. **Integrate Search UI** (2-3 hours)
-2. **Implement Video Playback** (2-3 hours)
-3. **Add Manga Reader Gestures** (2-3 hours)
-4. **Complete Download Manager** (2-3 hours)
-5. **Build & Test APK** (1 hour)
+### 🔶 Planned
+- [ ] Offline download manager (background fetch)
+- [ ] Service Worker for content caching
+- [ ] Notification alerts for new episodes
+- [ ] Settings screen (quality, theme, etc.)
 
 ---
 
 ## 🐛 Troubleshooting
 
 ### "SDK location not found"
-Set Android SDK path:
 ```bash
 export ANDROID_HOME=/path/to/android-sdk
 export PATH=$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH
 ```
 
-### "CORS errors in scrapers"
-AniWatch direct access can be blocked by anti-bot protections. Start the local backend (`start-backend.sh`) so the app can use localhost first.
+### Local build fails on ARM64 (Termux/proot)
+Android SDK tools are x86_64 only. Use the GitHub Actions CI workflow instead—push to `main` and download the artifact.
 
 ### "No results from search"
-Try searching with different terms or switch sources in the coordinator.
+Some sources may be temporarily down. The coordinator uses `Promise.allSettled` so partial results still display. Try refreshing.
 
 ---
 
-## 📞 Support
+## 🎓 Tech Stack
 
-- **Capacitor**: https://capacitorjs.com/docs
-- **IndexedDB**: https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
-- **HLS.js**: https://github.com/video-dev/hls.js
-- **MangaDex API**: https://api.mangadex.org
+- **Frontend**: Vanilla JavaScript ES6+, HTML5, CSS3
+- **Database**: IndexedDB v2
+- **Mobile**: Capacitor.js v5.6.0
+- **Video**: HLS.js
+- **Build**: Gradle (Android), GitHub Actions (CI)
+- **APIs**: Jikan v4, MangaDex v5, AniWatch, MangaKatana
 
 ---
 
 ## 📄 License
 
-MIT License - Feel free to use, modify, and distribute.
+MIT License — feel free to use, modify, and distribute.
 
 ---
 
-## 🌟 Contributing
-
-Contributions welcome! See [GIT_WORKFLOW.md](./GIT_WORKFLOW.md) for guidelines.
-
----
-
-**Status**: ✅ Production-Ready Foundation  
-**Last Updated**: 2026-04-01  
-**Maintainer**: AniVault Team  
+**Status**: ✅ Production-Ready
+**Last Updated**: 2026-04-04
+**Build**: GitHub Actions (auto on push)
 
 Built with ❤️ for anime and manga fans
