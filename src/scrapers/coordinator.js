@@ -13,6 +13,90 @@ import { MangaPillScraper } from './mangapill.js';
 import { JikanScraper } from './jikan.js';
 import { aiMatcher } from '../utils/ai-matcher.js';
 
+/**
+ * Known wrong manga title corrections.
+ * Keys are normalized (lowercase, stripped) versions of the search title.
+ * Each entry has:
+ *  - correctTitle: the exact title to prefer in search results
+ *  - rejectPatterns: substrings that indicate a wrong match (anthology, spin-off, etc.)
+ *  - altSearchTerms: alternative search queries to try
+ *  - preferredMdexId: if set, directly use this MangaDex ID
+ */
+const TITLE_CORRECTIONS = {
+    'ijiranaide nagatoro san': {
+        correctTitle: 'Ijiranaide, Nagatoro-san',
+        rejectPatterns: ['anthology', 'fan colored', 'fan colour', '4-koma'],
+        altSearchTerms: ["Don't Toy with Me Miss Nagatoro"],
+        preferredMdexId: 'd86cf65b-5f6c-437d-a0af-19a31f94ec55',
+    },
+    'dont toy with me miss nagatoro': {
+        correctTitle: 'Ijiranaide, Nagatoro-san',
+        rejectPatterns: ['anthology', 'fan colored', 'fan colour', '4-koma'],
+        altSearchTerms: ['Ijiranaide Nagatoro-san'],
+        preferredMdexId: 'd86cf65b-5f6c-437d-a0af-19a31f94ec55',
+    },
+    'kaguya sama wa kokurasetai tensai tachi no renai zunousen': {
+        correctTitle: 'Kaguya-sama wa Kokurasetai: Tensai-tachi no Renai Zunousen',
+        rejectPatterns: ['doujin', 'anthology', 'official', 'fanbook', '4-koma'],
+        altSearchTerms: ['Kaguya-sama Love is War'],
+    },
+    'one punch man': {
+        correctTitle: 'One Punch-Man',
+        rejectPatterns: ['one original', 'webcomic', 'fan'],
+        altSearchTerms: ['One Punch-Man Yusuke Murata'],
+    },
+    'shingeki no kyojin': {
+        correctTitle: 'Shingeki no Kyojin',
+        rejectPatterns: ['before the fall', 'junior high', 'lost girls', 'no regrets', 'colored', 'spoof'],
+        altSearchTerms: ['Attack on Titan'],
+    },
+    'boku no hero academia': {
+        correctTitle: 'Boku no Hero Academia',
+        rejectPatterns: ['vigilantes', 'smash', 'team up', 'illegals', 'colored'],
+        altSearchTerms: ['My Hero Academia'],
+    },
+    'jujutsu kaisen': {
+        correctTitle: 'Jujutsu Kaisen',
+        rejectPatterns: ['0', 'prequel', 'anthology', 'colored', 'fan'],
+        altSearchTerms: [],
+    },
+    'chainsaw man': {
+        correctTitle: 'Chainsaw Man',
+        rejectPatterns: ['buddy stories', 'fan', 'colored', 'anthology'],
+        altSearchTerms: [],
+    },
+    'sono bisque doll wa koi wo suru': {
+        correctTitle: 'Sono Bisque Doll wa Koi wo Suru',
+        rejectPatterns: ['anthology', 'fan', 'colored'],
+        altSearchTerms: ['My Dress-Up Darling'],
+    },
+    'spy x family': {
+        correctTitle: 'SPY×FAMILY',
+        rejectPatterns: ['anthology', 'fan', 'colored', 'novel'],
+        altSearchTerms: ['SPY FAMILY'],
+    },
+    'tokyo ghoul': {
+        correctTitle: 'Tokyo Ghoul',
+        rejectPatterns: ['re', ':re', 'jack', 'joker', 'quest', 'novel', 'colored'],
+        altSearchTerms: [],
+    },
+    'tokyo ghoul re': {
+        correctTitle: 'Tokyo Ghoul:re',
+        rejectPatterns: ['quest', 'novel', 'colored', 'fan'],
+        altSearchTerms: ['Tokyo Ghoul re'],
+    },
+    'blue lock': {
+        correctTitle: 'Blue Lock',
+        rejectPatterns: ['episode nagi', 'fan', 'colored', 'anthology'],
+        altSearchTerms: [],
+    },
+    'oshi no ko': {
+        correctTitle: 'Oshi no Ko',
+        rejectPatterns: ['anthology', 'fan', 'colored'],
+        altSearchTerms: ['[Oshi no Ko]'],
+    },
+};
+
 export class SearchCoordinator {
     /**
      * Search all sources for anime/manga
@@ -279,6 +363,20 @@ export class SearchCoordinator {
         const normalizedSource = String(source || '').toLowerCase();
         const katanaTarget = mangaUrl || mangaId;
 
+        // Check title corrections for preferred MangaDex ID
+        const correction = mangaTitle ? this._getTitleCorrection(mangaTitle) : null;
+        if (correction?.preferredMdexId && normalizedSource === 'mangadex') {
+            try {
+                const chapters = await MangaDexScraper.getChapters(correction.preferredMdexId);
+                if (chapters && chapters.length > 0) {
+                    console.log(`[Coordinator] Title correction hit: "${mangaTitle}" → MangaDex ID ${correction.preferredMdexId}`);
+                    return chapters;
+                }
+            } catch (e) {
+                console.warn('[Coordinator] Title correction MangaDex fetch failed:', e.message);
+            }
+        }
+
         // Try primary source
         let chapters = [];
         try {
@@ -300,9 +398,32 @@ export class SearchCoordinator {
                 if (normalizedSource === 'mangakatana') {
                     // MangaKatana failed → try MangaDex by searching title
                     if (mangaTitle) {
-                        const mdexResults = await MangaDexScraper.search(mangaTitle);
-                        const match = await this._bestMangaMatchAI(mdexResults, mangaTitle);
-                        if (match) chapters = await MangaDexScraper.getChapters(match.id);
+                        // Try preferred MangaDex ID from corrections first
+                        const fallbackCorrection = this._getTitleCorrection(mangaTitle);
+                        if (fallbackCorrection?.preferredMdexId) {
+                            try {
+                                chapters = await MangaDexScraper.getChapters(fallbackCorrection.preferredMdexId);
+                                if (chapters && chapters.length > 0) {
+                                    console.log(`[Coordinator] Correction fallback hit: "${mangaTitle}" → MangaDex`);
+                                }
+                            } catch (_) {}
+                        }
+                        if (!chapters || chapters.length === 0) {
+                            const mdexResults = await MangaDexScraper.search(mangaTitle);
+                            const match = await this._bestMangaMatchAI(mdexResults, mangaTitle);
+                            if (match) chapters = await MangaDexScraper.getChapters(match.id);
+                        }
+                        // If still no chapters, try alt search terms from corrections
+                        if ((!chapters || chapters.length === 0) && fallbackCorrection?.altSearchTerms) {
+                            for (const alt of fallbackCorrection.altSearchTerms) {
+                                const altResults = await MangaDexScraper.search(alt);
+                                const altMatch = await this._bestMangaMatchAI(altResults, mangaTitle);
+                                if (altMatch) {
+                                    chapters = await MangaDexScraper.getChapters(altMatch.id);
+                                    if (chapters && chapters.length > 0) break;
+                                }
+                            }
+                        }
                     } else {
                         chapters = await MangaDexScraper.getChapters(mangaId);
                     }
@@ -669,15 +790,52 @@ export class SearchCoordinator {
         return null;
     }
 
+    /**
+     * Look up title correction entry for a given manga title.
+     * Returns the correction object or null.
+     */
+    static _getTitleCorrection(title) {
+        const key = this._normalizeTitle(title);
+        return TITLE_CORRECTIONS[key] || null;
+    }
+
+    /**
+     * Check if a result title matches a known-wrong pattern (anthology, spin-off, etc.)
+     */
+    static _isRejectedMatch(resultTitle, correction) {
+        if (!correction || !correction.rejectPatterns) return false;
+        const lower = (resultTitle || '').toLowerCase();
+        return correction.rejectPatterns.some(pat => lower.includes(pat.toLowerCase()));
+    }
+
     /** Core scoring logic for manga matching (extracted for reuse) */
     static _scoreBestManga(results, title) {
         const targetNorm = this._normalizeTitle(title);
         const targetCompact = targetNorm.replace(/\s/g, '');
+        const correction = this._getTitleCorrection(title);
+
+        // If we have a preferred MangaDex ID, check for direct match first
+        if (correction?.preferredMdexId) {
+            const preferred = results.find(r =>
+                r.id === correction.preferredMdexId || r.mangaDexId === correction.preferredMdexId
+            );
+            if (preferred) {
+                return { best: preferred, bestScore: 300, bestOverlap: 1.0 };
+            }
+        }
 
         let best = null;
         let bestScore = -Infinity;
 
         for (const r of results) {
+            // Reject known-wrong matches (anthologies, spin-offs, etc.)
+            if (correction && this._isRejectedMatch(r.title, correction)) {
+                continue;
+            }
+            if (correction && r.titleEnglish && this._isRejectedMatch(r.titleEnglish, correction)) {
+                continue;
+            }
+
             const rNorm = this._normalizeTitle(r.title);
             const rCompact = rNorm.replace(/\s/g, '');
             const rEnNorm = r.titleEnglish ? this._normalizeTitle(r.titleEnglish) : '';
@@ -687,6 +845,14 @@ export class SearchCoordinator {
             // Exact compact match (ignoring spaces/punctuation) — perfect
             if (rCompact === targetCompact || (rEnCompact && rEnCompact === targetCompact)) {
                 return { best: r, bestScore: 200, bestOverlap: 1.0 };
+            }
+
+            // Also check against the correction's correctTitle
+            if (correction?.correctTitle) {
+                const correctedNorm = this._normalizeTitle(correction.correctTitle).replace(/\s/g, '');
+                if (rCompact === correctedNorm || (rEnCompact && rEnCompact === correctedNorm)) {
+                    return { best: r, bestScore: 200, bestOverlap: 1.0 };
+                }
             }
 
             if (rCompact.includes(targetCompact) || targetCompact.includes(rCompact) ||
