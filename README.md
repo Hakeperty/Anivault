@@ -271,8 +271,9 @@ MIT License — feel free to use, modify, and distribute.
 
 ---
 
-**Status**: ✅ Production-Ready
+**Status**: ✅
 **Last Updated**: 2026-04-04
 **Build**: GitHub Actions (auto on push)
 
 Built with ❤️ for anime and manga fans
+And tested by Hugo.
