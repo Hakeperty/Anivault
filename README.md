@@ -233,8 +233,7 @@ Download the `anivault-debug` artifact from the latest passing run.
 ### 🔶 Planned
 - [ ] Offline download manager (background fetch)
 - [ ] Service Worker for content caching
-- [ ] Notification alerts for new episodes
-- [ ] Settings screen (quality, theme, etc.)
+
 
 ---
 
