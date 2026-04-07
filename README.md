@@ -275,4 +275,7 @@ MIT License — feel free to use, modify, and distribute.
 **Build**: GitHub Actions (auto on push)
 
 Built with ❤️ for anime and manga fans
-And tested by Hugo.
+
+---
+
+And tested by BeefSchnitzel.
